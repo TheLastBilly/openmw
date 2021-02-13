@@ -96,8 +96,11 @@ Launcher::SettingsPage::~SettingsPage()
 void Launcher::SettingsPage::on_wizardButton_clicked()
 {
     mMain->writeSettings();
-
+#ifdef __HAIKU__
+    if (!mWizardInvoker->startProcess(QLatin1String("OpenMW-Wizard"), false))
+#else
     if (!mWizardInvoker->startProcess(QLatin1String("openmw-wizard"), false))
+#endif
         return;
 }
 

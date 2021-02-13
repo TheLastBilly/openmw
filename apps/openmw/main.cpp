@@ -243,6 +243,11 @@ int runApplication(int argc, char *argv[])
     boost::filesystem::current_path(binary_path.parent_path());
     setenv("OSG_GL_TEXTURE_STORAGE", "OFF", 0);
 #endif
+#ifdef __HAIKU__
+	boost::filesystem::path binary_path = boost::filesystem::system_complete(boost::filesystem::path(argv[0]));
+	boost::filesystem::current_path(binary_path.parent_path());
+	setenv("OPENMW_DECOMPRESS_TEXTURES", "1", 1);
+#endif
 
     Files::ConfigurationManager cfgMgr;
     std::unique_ptr<OMW::Engine> engine;

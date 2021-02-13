@@ -171,7 +171,11 @@ Launcher::FirstRunDialogResult Launcher::MainDialog::showFirstRunDialog()
 
         if (msgBox.clickedButton() == wizardButton)
         {
+#ifdef __HAIKU__
+            if (!mWizardInvoker->startProcess(QLatin1String("OpenMW-Wizard"), false)) {
+#else
             if (!mWizardInvoker->startProcess(QLatin1String("openmw-wizard"), false)) {
+#endif
                 return FirstRunDialogResultFailure;
             } else {
                 return FirstRunDialogResultWizard;
@@ -390,7 +394,11 @@ bool Launcher::MainDialog::setupGameData()
 
         if (msgBox.clickedButton() == wizardButton)
         {
+#ifdef __HAIKU__
+            if (!mWizardInvoker->startProcess(QLatin1String("OpenMW-Wizard"), false)) {
+#else
             if (!mWizardInvoker->startProcess(QLatin1String("openmw-wizard"), false)) {
+#endif
                 return false;
             } else {
                 return true;
@@ -599,6 +607,10 @@ void Launcher::MainDialog::play()
 
     // Launch the game detached
 
+#ifdef __HAIKU__
+    if (mGameInvoker->startProcess(QLatin1String("OpenMW"), true))
+#else
     if (mGameInvoker->startProcess(QLatin1String("openmw"), true))
+#endif
         return qApp->quit();
 }

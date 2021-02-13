@@ -336,7 +336,11 @@ void OMW::Engine::createWindow(Settings::Manager& settings)
         pos_y = SDL_WINDOWPOS_UNDEFINED_DISPLAY(screen);
     }
 
+#ifdef __HAIKU__
+	Uint32 flags = SDL_WINDOW_OPENGL|SDL_WINDOW_SHOWN;
+#else
     Uint32 flags = SDL_WINDOW_OPENGL|SDL_WINDOW_SHOWN|SDL_WINDOW_RESIZABLE;
+#endif
     if(fullscreen)
         flags |= SDL_WINDOW_FULLSCREEN;
 

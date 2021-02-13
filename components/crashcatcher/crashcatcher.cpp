@@ -12,7 +12,9 @@
 
 #include <pthread.h>
 #include <stdbool.h>
+#ifndef __HAIKU__
 #include <sys/ptrace.h>
+#endif
 
 #include <components/debug/debuglog.hpp>
 

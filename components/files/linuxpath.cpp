@@ -1,6 +1,6 @@
 #include "linuxpath.hpp"
 
-#if defined(__linux__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__) || defined(__HAIKU__)
 
 #include <pwd.h>
 #include <unistd.h>
@@ -54,17 +54,32 @@ LinuxPath::LinuxPath(const std::string& application_name)
 
 boost::filesystem::path LinuxPath::getUserConfigPath() const
 {
+#ifdef __HAIKU__
+	boost::filesystem::path path("/boot/home/config/settings");
+	return  path / mName;
+#else
     return getEnv("XDG_CONFIG_HOME", getUserHome() / ".config") / mName;
+#endif
 }
 
 boost::filesystem::path LinuxPath::getUserDataPath() const
 {
+#ifdef __HAIKU__
+	boost::filesystem::path path("/boot/home/config/settings");
+	return  path / mName;
+#else
     return getEnv("XDG_DATA_HOME", getUserHome() / ".local/share") / mName;
+#endif
 }
 
 boost::filesystem::path LinuxPath::getCachePath() const
 {
+#ifdef __HAIKU__
+       boost::filesystem::path path("/boot/home/config/cache");
+       return  path / mName;
+#else
     return getEnv("XDG_CACHE_HOME", getUserHome() / ".cache") / mName;
+#endif
 }
 
 boost::filesystem::path LinuxPath::getGlobalConfigPath() const

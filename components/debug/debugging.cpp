@@ -52,6 +52,9 @@ namespace Debug
 
 int wrapApplication(int (*innerApplication)(int argc, char *argv[]), int argc, char *argv[], const std::string& appName)
 {
+#ifdef __HAIKU
+	return innerApplication(argc, argv);
+#else
     // Some objects used to redirect cout and cerr
     // Scope must be here, so this still works inside the catch block for logging exceptions
     std::streambuf* cout_rdbuf = std::cout.rdbuf ();
@@ -113,4 +116,5 @@ int wrapApplication(int (*innerApplication)(int argc, char *argv[]), int argc, c
     std::cerr.rdbuf(cerr_rdbuf);
 
     return ret;
+#endif
 }

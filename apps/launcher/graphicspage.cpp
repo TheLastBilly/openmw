@@ -12,7 +12,11 @@
 #define MAC_OS_X_VERSION_MIN_REQUIRED __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__
 #endif // MAC_OS_X_VERSION_MIN_REQUIRED
 
+#ifdef __HAIKU__
+#include <Screen.h>
+#else
 #include <SDL_video.h>
+#endif
 
 #include <components/files/configurationmanager.hpp>
 
@@ -57,6 +61,9 @@ bool Launcher::GraphicsPage::setupSDL()
     }
 #endif
 
+#ifdef __HAIKU__
+	int displays = 1;
+#else
     int displays = SDL_GetNumVideoDisplays();
 
     if (displays < 0)
@@ -69,7 +76,7 @@ bool Launcher::GraphicsPage::setupSDL()
         msgBox.exec();
         return false;
     }
-
+#endif
     screenComboBox->clear();
     for (int i = 0; i < displays; i++)
     {
@@ -168,9 +175,30 @@ void Launcher::GraphicsPage::saveSettings()
         mEngineSettings.setInt("screen", "Video", cScreen);
 }
 
+#ifdef __HAIKU__
+static QString makeModeString(int w, int h)
+{
+	QString aspect = getAspect(w, h);
+	QString resolution = QString::number(w) + QString(" x ") + QString::number(h);
+	if (aspect == QLatin1String("16:9") || aspect == QLatin1String("16:10")) {
+		resolution.append(" (Wide " + aspect + ")");
+	} else if (aspect == QLatin1String("4:3")) {
+		resolution.append(" (Standard 4:3)");
+	}
+	return resolution;
+}
+#endif
+
 QStringList Launcher::GraphicsPage::getAvailableResolutions(int screen)
 {
     QStringList result;
+#ifdef __HAIKU__
+	BScreen mainScreen(B_MAIN_SCREEN_ID);
+	result.append(makeModeString(640, 480));
+	result.append(makeModeString(800, 600));
+	result.append(makeModeString(1024, 768));
+	result.append(makeModeString(mainScreen.Frame().Width() + 1, mainScreen.Frame().Height() + 1));
+#else
     SDL_DisplayMode mode;
     int modeIndex, modes = SDL_GetNumDisplayModes(screen);
 
@@ -210,7 +238,7 @@ QStringList Launcher::GraphicsPage::getAvailableResolutions(int screen)
 
         result.append(resolution);
     }
-
+#endif
     result.removeDuplicates();
     return result;
 }
