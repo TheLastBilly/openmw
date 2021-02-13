@@ -1,6 +1,8 @@
 #include "static.hpp"
 
 #include <components/esm/loadstat.hpp>
+#include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/vismask.hpp>
 
 #include "../mwworld/ptr.hpp"
 #include "../mwphysics/physicssystem.hpp"
@@ -14,8 +16,10 @@ namespace MWClass
 
     void Static::insertObjectRendering (const MWWorld::Ptr& ptr, const std::string& model, MWRender::RenderingInterface& renderingInterface) const
     {
-        if (!model.empty()) {
+        if (!model.empty())
+        {
             renderingInterface.getObjects().insertModel(ptr, model);
+            ptr.getRefData().getBaseNode()->setNodeMask(SceneUtil::Mask_Static);
         }
     }
 
@@ -39,6 +43,11 @@ namespace MWClass
     std::string Static::getName (const MWWorld::ConstPtr& ptr) const
     {
         return "";
+    }
+
+    bool Static::hasToolTip(const MWWorld::ConstPtr& ptr) const
+    {
+        return false;
     }
 
     void Static::registerSelf()

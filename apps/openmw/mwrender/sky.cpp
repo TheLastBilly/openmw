@@ -16,12 +16,13 @@
 #include <osg/BlendFunc>
 #include <osg/AlphaFunc>
 #include <osg/PolygonOffset>
+#include <osg/Version>
 #include <osg/observer_ptr>
 
+#include <osgParticle/BoxPlacer>
+#include <osgParticle/ModularEmitter>
 #include <osgParticle/ParticleSystem>
 #include <osgParticle/ParticleSystemUpdater>
-#include <osgParticle/ModularEmitter>
-#include <osgParticle/BoxPlacer>
 #include <osgParticle/ConstantRateCounter>
 #include <osgParticle/RadialShooter>
 
@@ -42,11 +43,12 @@
 #include <components/sceneutil/statesetupdater.hpp>
 #include <components/sceneutil/controller.hpp>
 #include <components/sceneutil/visitor.hpp>
+#include <components/sceneutil/vismask.hpp>
+#include <components/sceneutil/shadow.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
-#include "vismask.hpp"
 #include "renderbin.hpp"
 
 namespace
@@ -224,7 +226,7 @@ protected:
     virtual void apply(osg::StateSet *stateset, osg::NodeVisitor *nv)
     {
         osg::TexMat* texMat = static_cast<osg::TexMat*>(stateset->getTextureAttribute(0, osg::StateAttribute::TEXMAT));
-        texMat->setMatrix(osg::Matrix::translate(osg::Vec3f(0, mAnimationTimer, 0.f)));
+        texMat->setMatrix(osg::Matrix::translate(osg::Vec3f(0, -mAnimationTimer, 0.f)));
 
         stateset->setTextureAttribute(0, mTexture, osg::StateAttribute::ON|osg::StateAttribute::OVERRIDE);
         stateset->setTextureAttribute(1, mTexture, osg::StateAttribute::ON|osg::StateAttribute::OVERRIDE);
@@ -265,16 +267,16 @@ public:
 
     META_Node(MWRender, CameraRelativeTransform)
 
-    const osg::Vec3f& getLastEyePoint() const
+    const osg::Vec3f& getLastViewPoint() const
     {
-        return mEyePoint;
+        return mViewPoint;
     }
 
     virtual bool computeLocalToWorldMatrix(osg::Matrix& matrix, osg::NodeVisitor* nv) const
     {
         if (nv->getVisitorType() == osg::NodeVisitor::CULL_VISITOR)
         {
-            mEyePoint = static_cast<osgUtil::CullVisitor*>(nv)->getEyePoint();
+            mViewPoint = static_cast<osgUtil::CullVisitor*>(nv)->getViewPoint();
         }
 
         if (_referenceFrame==RELATIVE_RF)
@@ -336,8 +338,8 @@ public:
         }
     };
 private:
-    // eyePoint for the current frame
-    mutable osg::Vec3f mEyePoint;
+    // viewPoint for the current frame
+    mutable osg::Vec3f mViewPoint;
 };
 
 class ModVertexAlphaVisitor : public osg::NodeVisitor
@@ -390,7 +392,7 @@ private:
 /// @brief Hides the node subgraph if the eye point is below water.
 /// @note Must be added as cull callback.
 /// @note Meant to be used on a node that is child of a CameraRelativeTransform.
-/// The current eye point must be retrieved by the CameraRelativeTransform since we can't get it anymore once we are in camera-relative space.
+/// The current view point must be retrieved by the CameraRelativeTransform since we can't get it anymore once we are in camera-relative space.
 class UnderwaterSwitchCallback : public osg::NodeCallback
 {
 public:
@@ -401,11 +403,15 @@ public:
     {
     }
 
+    bool isUnderwater()
+    {
+        osg::Vec3f viewPoint = mCameraRelativeTransform->getLastViewPoint();
+        return mEnabled && viewPoint.z() < mWaterLevel;
+    }
+
     virtual void operator()(osg::Node* node, osg::NodeVisitor* nv)
     {
-        osg::Vec3f eyePoint = mCameraRelativeTransform->getLastEyePoint();
-
-        if (mEnabled && eyePoint.z() < mWaterLevel)
+        if (isUnderwater())
             return;
 
         traverse(node, nv);
@@ -448,7 +454,7 @@ public:
 
     void setVisible(bool visible)
     {
-        mTransform->setNodeMask(visible ? mVisibleMask : 0);
+        mTransform->setNodeMask(visible ? mVisibleMask : SceneUtil::Mask_Disabled);
     }
 
 protected:
@@ -464,7 +470,7 @@ class Sun : public CelestialBody
 {
 public:
     Sun(osg::Group* parentNode, Resource::ImageManager& imageManager)
-        : CelestialBody(parentNode, 1.0f, 1, Mask_Sun)
+        : CelestialBody(parentNode, 1.0f, 1, SceneUtil::Mask_Sun)
         , mUpdater(new Updater)
     {
         mTransform->addUpdateCallback(mUpdater);
@@ -553,25 +559,35 @@ private:
         osg::ref_ptr<osg::OcclusionQueryNode> oqn = new osg::OcclusionQueryNode;
         oqn->setQueriesEnabled(true);
 
+#if OSG_VERSION_GREATER_OR_EQUAL(3, 6, 5)
+        // With OSG 3.6.5, the method of providing user defined query geometry has been completely replaced
+        osg::ref_ptr<osg::QueryGeometry> queryGeom = new osg::QueryGeometry(oqn->getName());
+#else
+        osg::ref_ptr<osg::QueryGeometry> queryGeom = oqn->getQueryGeometry();
+#endif
+
         // Make it fast! A DYNAMIC query geometry means we can't break frame until the flare is rendered (which is rendered after all the other geometry,
         // so that would be pretty bad). STATIC should be safe, since our node's local bounds are static, thus computeBounds() which modifies the queryGeometry
         // is only called once.
         // Note the debug geometry setDebugDisplay(true) is always DYNAMIC and that can't be changed, not a big deal.
-        oqn->getQueryGeometry()->setDataVariance(osg::Object::STATIC);
+        queryGeom->setDataVariance(osg::Object::STATIC);
 
         // Set up the query geometry to match the actual sun's rendering shape. osg::OcclusionQueryNode wasn't originally intended to allow this,
         // normally it would automatically adjust the query geometry to match the sub graph's bounding box. The below hack is needed to
         // circumvent this.
-        osg::Geometry* queryGeom = oqn->getQueryGeometry();
         queryGeom->setVertexArray(mGeom->getVertexArray());
         queryGeom->setTexCoordArray(0, mGeom->getTexCoordArray(0), osg::Array::BIND_PER_VERTEX);
-        queryGeom->removePrimitiveSet(0, oqn->getQueryGeometry()->getNumPrimitiveSets());
+        queryGeom->removePrimitiveSet(0, queryGeom->getNumPrimitiveSets());
         queryGeom->addPrimitiveSet(mGeom->getPrimitiveSet(0));
 
         // Hack to disable unwanted awful code inside OcclusionQueryNode::computeBound.
         oqn->setComputeBoundingSphereCallback(new DummyComputeBoundCallback);
         // Still need a proper bounding sphere.
         oqn->setInitialBound(queryGeom->getBound());
+
+#if OSG_VERSION_GREATER_OR_EQUAL(3, 6, 5)
+        oqn->setQueryGeometry(queryGeom.release());
+#endif
 
         osg::StateSet* queryStateSet = new osg::StateSet;
         if (queryVisible)
@@ -639,7 +655,7 @@ private:
         camera->setProjectionMatrix(osg::Matrix::identity());
         camera->setReferenceFrame(osg::Transform::ABSOLUTE_RF); // add to skyRoot instead?
         camera->setViewMatrix(osg::Matrix::identity());
-        camera->setClearMask(0);
+        camera->setClearMask(SceneUtil::Mask_Disabled);
         camera->setRenderOrder(osg::Camera::NESTED_RENDER);
         camera->setAllowEventFocus(false);
 
@@ -823,10 +839,9 @@ private:
             , mTimeOfDayFade(1.f)
             , mGlareView(1.f)
         {
-            const Fallback::Map* fallback = MWBase::Environment::get().getWorld()->getFallback();
-            mColor = fallback->getFallbackColour("Weather_Sun_Glare_Fader_Color");
-            mSunGlareFaderMax = fallback->getFallbackFloat("Weather_Sun_Glare_Fader_Max");
-            mSunGlareFaderAngleMax = fallback->getFallbackFloat("Weather_Sun_Glare_Fader_Angle_Max");
+            mColor = Fallback::Map::getColour("Weather_Sun_Glare_Fader_Color");
+            mSunGlareFaderMax = Fallback::Map::getFloat("Weather_Sun_Glare_Fader_Max");
+            mSunGlareFaderAngleMax = Fallback::Map::getFloat("Weather_Sun_Glare_Fader_Angle_Max");
 
             // Replicating a design flaw in MW. The color was being set on both ambient and emissive properties, which multiplies the result by two,
             // then finally gets clamped by the fixed function pipeline. With the default INI settings, only the red component gets clamped,
@@ -1104,7 +1119,7 @@ SkyManager::SkyManager(osg::Group* parentNode, Resource::SceneManager* sceneMana
     , mMonth(0)
     , mCloudAnimationTimer(0.f)
     , mRainTimer(0.f)
-    , mStormDirection(0,-1,0)
+    , mStormDirection(0,1,0)
     , mClouds()
     , mNextClouds()
     , mCloudBlendFactor(0.0f)
@@ -1113,7 +1128,11 @@ SkyManager::SkyManager(osg::Group* parentNode, Resource::SceneManager* sceneMana
     , mRemainingTransitionTime(0.0f)
     , mRainEnabled(false)
     , mRainSpeed(0)
-    , mRainFrequency(1)
+    , mRainDiameter(0)
+    , mRainMinHeight(0)
+    , mRainMaxHeight(0)
+    , mRainEntranceSpeed(1)
+    , mRainMaxRaindrops(0)
     , mWindSpeed(0.f)
     , mEnabled(true)
     , mSunEnabled(true)
@@ -1123,9 +1142,10 @@ SkyManager::SkyManager(osg::Group* parentNode, Resource::SceneManager* sceneMana
     skyroot->setName("Sky Root");
     // Assign empty program to specify we don't want shaders
     // The shaders generated by the SceneManager can't handle everything we need
-    skyroot->getOrCreateStateSet()->setAttributeAndModes(new osg::Program(), osg::StateAttribute::OVERRIDE);
+    skyroot->getOrCreateStateSet()->setAttributeAndModes(new osg::Program(), osg::StateAttribute::OVERRIDE|osg::StateAttribute::PROTECTED|osg::StateAttribute::ON);
+    SceneUtil::ShadowManager::disableShadowsForStateSet(skyroot->getOrCreateStateSet());
 
-    skyroot->setNodeMask(Mask_Sky);
+    skyroot->setNodeMask(SceneUtil::Mask_Sky);
     parentNode->addChild(skyroot);
 
     mRootNode = skyroot;
@@ -1157,7 +1177,7 @@ void SkyManager::create()
     mAtmosphereDay->addUpdateCallback(mAtmosphereUpdater);
 
     mAtmosphereNightNode = new osg::PositionAttitudeTransform;
-    mAtmosphereNightNode->setNodeMask(0);
+    mAtmosphereNightNode->setNodeMask(SceneUtil::Mask_Disabled);
     mEarlyRenderBinRoot->addChild(mAtmosphereNightNode);
 
     osg::ref_ptr<osg::Node> atmosphereNight;
@@ -1173,9 +1193,8 @@ void SkyManager::create()
 
     mSun.reset(new Sun(mEarlyRenderBinRoot, *mSceneManager->getImageManager()));
 
-    const Fallback::Map* fallback=MWBase::Environment::get().getWorld()->getFallback();
-    mMasser.reset(new Moon(mEarlyRenderBinRoot, *mSceneManager->getImageManager(), fallback->getFallbackFloat("Moons_Masser_Size")/125, Moon::Type_Masser));
-    mSecunda.reset(new Moon(mEarlyRenderBinRoot, *mSceneManager->getImageManager(), fallback->getFallbackFloat("Moons_Secunda_Size")/125, Moon::Type_Secunda));
+    mMasser.reset(new Moon(mEarlyRenderBinRoot, *mSceneManager->getImageManager(), Fallback::Map::getFloat("Moons_Masser_Size")/125, Moon::Type_Masser));
+    mSecunda.reset(new Moon(mEarlyRenderBinRoot, *mSceneManager->getImageManager(), Fallback::Map::getFloat("Moons_Secunda_Size")/125, Moon::Type_Secunda));
 
     mCloudNode = new osg::PositionAttitudeTransform;
     mEarlyRenderBinRoot->addChild(mCloudNode);
@@ -1191,7 +1210,7 @@ void SkyManager::create()
     mCloudUpdater2 = new CloudUpdater;
     mCloudUpdater2->setOpacity(0.f);
     mCloudMesh2->addUpdateCallback(mCloudUpdater2);
-    mCloudMesh2->setNodeMask(0);
+    mCloudMesh2->setNodeMask(SceneUtil::Mask_Disabled);
 
     osg::ref_ptr<osg::Depth> depth = new osg::Depth;
     depth->setWriteMask(false);
@@ -1199,7 +1218,7 @@ void SkyManager::create()
     mEarlyRenderBinRoot->getOrCreateStateSet()->setMode(GL_BLEND, osg::StateAttribute::ON);
     mEarlyRenderBinRoot->getOrCreateStateSet()->setMode(GL_FOG, osg::StateAttribute::OFF);
 
-    mMoonScriptColor = fallback->getFallbackColour("Moons_Script_Color");
+    mMoonScriptColor = Fallback::Map::getColour("Moons_Script_Color");
 
     mCreated = true;
 }
@@ -1454,7 +1473,7 @@ void SkyManager::createRain()
     mRainNode = new osg::Group;
 
     mRainParticleSystem = new osgParticle::ParticleSystem;
-    osg::Vec3 rainRange = osg::Vec3(600,600,600);
+    osg::Vec3 rainRange = osg::Vec3(mRainDiameter, mRainDiameter, (mRainMinHeight+mRainMaxHeight)/2.f);
 
     mRainParticleSystem->setParticleAlignment(osgParticle::ParticleSystem::FIXED);
     mRainParticleSystem->setAlignVectorX(osg::Vec3f(0.1,0,0));
@@ -1481,14 +1500,19 @@ void SkyManager::createRain()
     emitter->setParticleSystem(mRainParticleSystem);
 
     osg::ref_ptr<osgParticle::BoxPlacer> placer (new osgParticle::BoxPlacer);
-    placer->setXRange(-rainRange.x() / 2, rainRange.x() / 2); // Rain_Diameter
+    placer->setXRange(-rainRange.x() / 2, rainRange.x() / 2);
     placer->setYRange(-rainRange.y() / 2, rainRange.y() / 2);
-    placer->setZRange(300, 300);
+    placer->setZRange(-rainRange.z() / 2, rainRange.z() / 2);
     emitter->setPlacer(placer);
+    mPlacer = placer;
 
+    // FIXME: vanilla engine does not use a particle system to handle rain, it uses a NIF-file with 20 raindrops in it.
+    // It spawns the (maxRaindrops-getParticleSystem()->numParticles())*dt/rainEntranceSpeed batches every frame (near 1-2).
+    // Since the rain is a regular geometry, it produces water ripples, also in theory it can be removed if collides with something.
     osg::ref_ptr<RainCounter> counter (new RainCounter);
-    counter->setNumberOfParticlesPerSecondToCreate(600.0);
+    counter->setNumberOfParticlesPerSecondToCreate(mRainMaxRaindrops/mRainEntranceSpeed*20);
     emitter->setCounter(counter);
+    mCounter = counter;
 
     osg::ref_ptr<RainShooter> shooter (new RainShooter);
     mRainShooter = shooter;
@@ -1509,7 +1533,7 @@ void SkyManager::createRain()
     mRainFader = new RainFader(&mWeatherAlpha);
     mRainNode->addUpdateCallback(mRainFader);
     mRainNode->addCullCallback(mUnderwaterSwitch);
-    mRainNode->setNodeMask(Mask_WeatherParticles);
+    mRainNode->setNodeMask(SceneUtil::Mask_WeatherParticles);
 
     mRootNode->addChild(mRainNode);
 }
@@ -1521,6 +1545,8 @@ void SkyManager::destroyRain()
 
     mRootNode->removeChild(mRainNode);
     mRainNode = nullptr;
+    mPlacer = nullptr;
+    mCounter = nullptr;
     mRainParticleSystem = nullptr;
     mRainShooter = nullptr;
     mRainFader = nullptr;
@@ -1575,15 +1601,21 @@ void SkyManager::update(float duration)
             mRainIntensityUniform->set((float) mWeatherAlpha);
     }
 
+    switchUnderwaterRain();
+
     if (mIsStorm)
     {
         osg::Quat quat;
         quat.makeRotate(osg::Vec3f(0,1,0), mStormDirection);
 
-        if (mParticleNode)
-            mParticleNode->setAttitude(quat);
-
         mCloudNode->setAttitude(quat);
+        if (mParticleNode)
+        {
+            // Morrowind deliberately rotates the blizzard mesh, so so should we.
+            if (mCurrentParticleEffect == "meshes\\blizzard.nif")
+                quat.makeRotate(osg::Vec3f(-1,0,0), mStormDirection);
+            mParticleNode->setAttitude(quat);
+        }
     }
     else
         mCloudNode->setAttitude(osg::Quat());
@@ -1604,7 +1636,7 @@ void SkyManager::setEnabled(bool enabled)
     if (enabled && !mCreated)
         create();
 
-    mRootNode->setNodeMask(enabled ? Mask_Sky : 0);
+    mRootNode->setNodeMask(enabled ? SceneUtil::Mask_Sky : SceneUtil::Mask_Disabled);
 
     mEnabled = enabled;
 }
@@ -1619,16 +1651,40 @@ void SkyManager::updateRainParameters()
 {
     if (mRainShooter)
     {
-        float windFactor = mWindSpeed/3.f;
-        float angle = windFactor * osg::PI/4;
-        mRainShooter->setVelocity(osg::Vec3f(0, mRainSpeed * windFactor, -mRainSpeed));
+        float angle = -std::atan(mWindSpeed/50.f);
+        mRainShooter->setVelocity(osg::Vec3f(0, mRainSpeed*std::sin(angle), -mRainSpeed/std::cos(angle)));
         mRainShooter->setAngle(angle);
+
+        osg::Vec3 rainRange = osg::Vec3(mRainDiameter, mRainDiameter, (mRainMinHeight+mRainMaxHeight)/2.f);
+
+        mPlacer->setXRange(-rainRange.x() / 2, rainRange.x() / 2);
+        mPlacer->setYRange(-rainRange.y() / 2, rainRange.y() / 2);
+        mPlacer->setZRange(-rainRange.z() / 2, rainRange.z() / 2);
+
+        mCounter->setNumberOfParticlesPerSecondToCreate(mRainMaxRaindrops/mRainEntranceSpeed*20);
     }
+}
+
+void SkyManager::switchUnderwaterRain()
+{
+    if (!mRainParticleSystem)
+        return;
+
+    bool freeze = mUnderwaterSwitch->isUnderwater();
+    mRainParticleSystem->setFrozen(freeze);
 }
 
 void SkyManager::setWeather(const WeatherResult& weather)
 {
     if (!mCreated) return;
+
+    mRainEntranceSpeed = weather.mRainEntranceSpeed;
+    mRainMaxRaindrops = weather.mRainMaxRaindrops;
+    mRainDiameter = weather.mRainDiameter;
+    mRainMinHeight = weather.mRainMinHeight;
+    mRainMaxHeight = weather.mRainMaxHeight;
+    mRainSpeed = weather.mRainSpeed;
+    mWindSpeed = weather.mWindSpeed;
 
     if (mRainEffect != weather.mRainEffect)
     {
@@ -1643,9 +1699,6 @@ void SkyManager::setWeather(const WeatherResult& weather)
         }
     }
 
-    mRainFrequency = weather.mRainFrequency;
-    mRainSpeed = weather.mRainSpeed;
-    mWindSpeed = weather.mWindSpeed;
     updateRainParameters();
 
     mIsStorm = weather.mIsStorm;
@@ -1676,7 +1729,7 @@ void SkyManager::setWeather(const WeatherResult& weather)
             {
                 mParticleNode = new osg::PositionAttitudeTransform;
                 mParticleNode->addCullCallback(mUnderwaterSwitch);
-                mParticleNode->setNodeMask(Mask_WeatherParticles);
+                mParticleNode->setNodeMask(SceneUtil::Mask_WeatherParticles);
                 mRootNode->addChild(mParticleNode);
             }
 
@@ -1746,7 +1799,7 @@ void SkyManager::setWeather(const WeatherResult& weather)
 
         mCloudUpdater->setOpacity((1.f-mCloudBlendFactor));
         mCloudUpdater2->setOpacity(mCloudBlendFactor);
-        mCloudMesh2->setNodeMask(mCloudBlendFactor > 0.f ? ~0 : 0);
+        mCloudMesh2->setNodeMask(mCloudBlendFactor > 0.f ? SceneUtil::Mask_Default : SceneUtil::Mask_Disabled);
     }
 
     if (mCloudColour != weather.mFogColor)
@@ -1791,13 +1844,13 @@ void SkyManager::setWeather(const WeatherResult& weather)
         mAtmosphereNightUpdater->setFade(mStarsOpacity);
     }
 
-    mAtmosphereNightNode->setNodeMask(weather.mNight ? ~0 : 0);
+    mAtmosphereNightNode->setNodeMask(weather.mNight ? SceneUtil::Mask_Default : SceneUtil::Mask_Disabled);
 
     if (mRainFader)
         mRainFader->setAlpha(weather.mEffectFade * 0.6); // * Rain_Threshold?
 
-    for (std::vector<osg::ref_ptr<AlphaFader> >::const_iterator it = mParticleFaders.begin(); it != mParticleFaders.end(); ++it)
-        (*it)->setAlpha(weather.mEffectFade);
+    for (AlphaFader* fader : mParticleFaders)
+        fader->setAlpha(weather.mEffectFade);
 }
 
 void SkyManager::sunEnable()

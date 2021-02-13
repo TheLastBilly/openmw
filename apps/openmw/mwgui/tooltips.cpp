@@ -94,17 +94,19 @@ namespace MWGui
             return;
         }
 
-        bool guiMode = MWBase::Environment::get().getWindowManager()->isGuiMode();
+        MWBase::WindowManager *winMgr = MWBase::Environment::get().getWindowManager();
+        bool guiMode = winMgr->isGuiMode();
 
         if (guiMode)
         {
-            if (!MWBase::Environment::get().getWindowManager()->getCursorVisible())
+            if (!winMgr->getCursorVisible())
                 return;
             const MyGUI::IntPoint& mousePos = MyGUI::InputManager::getInstance().getMousePosition();
 
-            if (MWBase::Environment::get().getWindowManager()->getWorldMouseOver() && ((MWBase::Environment::get().getWindowManager()->getMode() == GM_Console)
-                || (MWBase::Environment::get().getWindowManager()->getMode() == GM_Container)
-                || (MWBase::Environment::get().getWindowManager()->getMode() == GM_Inventory)))
+            if (winMgr->getWorldMouseOver() &&
+                (winMgr->isConsoleMode() ||
+                (winMgr->getMode() == GM_Container) ||
+                (winMgr->getMode() == GM_Inventory)))
             {
                 if (mFocusObject.isEmpty ())
                     return;
@@ -112,7 +114,7 @@ namespace MWGui
                 const MWWorld::Class& objectclass = mFocusObject.getClass();
 
                 MyGUI::IntSize tooltipSize;
-                if ((!objectclass.hasToolTip(mFocusObject))&&(MWBase::Environment::get().getWindowManager()->getMode() == GM_Console))
+                if (!objectclass.hasToolTip(mFocusObject) && winMgr->isConsoleMode())
                 {
                     setCoord(0, 0, 300, 300);
                     mDynamicToolTipBox->setVisible(true);
@@ -212,7 +214,7 @@ namespace MWGui
                 {
                     MyGUI::IntCoord avatarPos = focus->getAbsoluteCoord();
                     MyGUI::IntPoint relMousePos = MyGUI::InputManager::getInstance ().getMousePosition () - MyGUI::IntPoint(avatarPos.left, avatarPos.top);
-                    MWWorld::Ptr item = MWBase::Environment::get().getWindowManager()->getInventoryWindow ()->getAvatarSelectedItem (relMousePos.left, relMousePos.top);
+                    MWWorld::Ptr item = winMgr->getInventoryWindow ()->getAvatarSelectedItem (relMousePos.left, relMousePos.top);
 
                     mFocusObject = item;
                     if (!mFocusObject.isEmpty ())
@@ -226,18 +228,17 @@ namespace MWGui
                         MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().find(focus->getUserString("Spell"));
                     info.caption = spell->mName;
                     Widgets::SpellEffectList effects;
-                    std::vector<ESM::ENAMstruct>::const_iterator end = spell->mEffects.mList.end();
-                    for (std::vector<ESM::ENAMstruct>::const_iterator it = spell->mEffects.mList.begin(); it != end; ++it)
+                    for (const ESM::ENAMstruct& spellEffect : spell->mEffects.mList)
                     {
                         Widgets::SpellEffectParams params;
-                        params.mEffectID = it->mEffectID;
-                        params.mSkill = it->mSkill;
-                        params.mAttribute = it->mAttribute;
-                        params.mDuration = it->mDuration;
-                        params.mMagnMin = it->mMagnMin;
-                        params.mMagnMax = it->mMagnMax;
-                        params.mRange = it->mRange;
-                        params.mArea = it->mArea;
+                        params.mEffectID = spellEffect.mEffectID;
+                        params.mSkill = spellEffect.mSkill;
+                        params.mAttribute = spellEffect.mAttribute;
+                        params.mDuration = spellEffect.mDuration;
+                        params.mMagnMin = spellEffect.mMagnMin;
+                        params.mMagnMax = spellEffect.mMagnMax;
+                        params.mRange = spellEffect.mRange;
+                        params.mArea = spellEffect.mArea;
                         params.mIsConstant = (spell->mData.mType == ESM::Spell::ST_Ability);
                         params.mNoTarget = false;
                         effects.push_back(params);
@@ -248,6 +249,9 @@ namespace MWGui
                         int school = MWMechanics::getSpellSchool(spell, player);
                         info.text = "#{sSchool}: " + sSchoolNames[school];
                     }
+                    std::string cost = focus->getUserString("SpellCost");
+                    if (cost != "" && cost != "0")
+                        info.text += MWGui::ToolTips::getValueString(spell->mData.mCost, "#{sCastCost}");
                     info.effects = effects;
                     tooltipSize = createToolTip(info);
                 }
@@ -260,14 +264,13 @@ namespace MWGui
                     tooltip->setVisible(true);
 
                     std::map<std::string, std::string> userStrings = focus->getUserStrings();
-                    for (std::map<std::string, std::string>::iterator it = userStrings.begin();
-                        it != userStrings.end(); ++it)
+                    for (auto& userStringPair : userStrings)
                     {
-                        size_t underscorePos = it->first.find("_");
+                        size_t underscorePos = userStringPair.first.find("_");
                         if (underscorePos == std::string::npos)
                             continue;
-                        std::string key = it->first.substr(0, underscorePos);
-                        std::string widgetName = it->first.substr(underscorePos+1, it->first.size()-(underscorePos+1));
+                        std::string key = userStringPair.first.substr(0, underscorePos);
+                        std::string widgetName = userStringPair.first.substr(underscorePos+1, userStringPair.first.size()-(underscorePos+1));
 
                         type = "Property";
                         size_t caretPos = key.find("^");
@@ -280,9 +283,9 @@ namespace MWGui
                         MyGUI::Widget* w;
                         getWidget(w, widgetName);
                         if (type == "Property")
-                            w->setProperty(key, it->second);
+                            w->setProperty(key, userStringPair.second);
                         else if (type == "UserData")
-                            w->setUserString(key, it->second);
+                            w->setUserString(key, userStringPair.second);
                     }
 
                     tooltipSize = tooltip->getSize();
@@ -327,6 +330,21 @@ namespace MWGui
         if ((position.top + size.height) > viewportSize.height)
         {
             position.top = MyGUI::InputManager::getInstance().getMousePosition().top - size.height - 8;
+        }
+    }
+
+    void ToolTips::clear()
+    {
+        mFocusObject = MWWorld::Ptr();
+
+        while (mDynamicToolTipBox->getChildCount())
+        {
+            MyGUI::Gui::getInstance().destroyWidget(mDynamicToolTipBox->getChildAt(0));
+        }
+
+        for (unsigned int i=0; i < mMainWidget->getChildCount(); ++i)
+        {
+            mMainWidget->getChildAt(i)->setVisible(false);
         }
     }
 
@@ -443,7 +461,7 @@ namespace MWGui
         MyGUI::IntSize totalSize = MyGUI::IntSize( std::min(std::max(textSize.width,captionSize.width + ((image != "") ? imageCaptionHPadding : 0)),maximumWidth),
             ((text != "") ? textSize.height + imageCaptionVPadding : 0) + captionHeight );
 
-        for (std::vector<std::string>::const_iterator it = info.notes.begin(); it != info.notes.end(); ++it)
+        for (const std::string& note : info.notes)
         {
             MyGUI::ImageBox* icon = mDynamicToolTipBox->createWidget<MyGUI::ImageBox>("MarkerButton",
                 MyGUI::IntCoord(padding.left, totalSize.height+padding.top, 8, 8), MyGUI::Align::Default);
@@ -453,7 +471,7 @@ namespace MWGui
                                                                                     MyGUI::Align::Default);
             edit->setEditMultiLine(true);
             edit->setEditWordWrap(true);
-            edit->setCaption(*it);
+            edit->setCaption(note);
             edit->setSize(edit->getWidth(), edit->getTextSize().height);
             icon->setPosition(icon->getLeft(),(edit->getTop()+edit->getBottom())/2-icon->getHeight()/2);
             totalSize.height += std::max(edit->getHeight(), icon->getHeight());
@@ -473,7 +491,9 @@ namespace MWGui
             effectsWidget->setEffectList(info.effects);
 
             std::vector<MyGUI::Widget*> effectItems;
-            effectsWidget->createEffectWidgets(effectItems, effectArea, coord, true, info.isPotion ? Widgets::MWEffectList::EF_NoTarget : 0);
+            int flag = info.isPotion ? Widgets::MWEffectList::EF_NoTarget : 0;
+            flag |= info.isIngredient ? Widgets::MWEffectList::EF_NoMagnitude : 0;
+            effectsWidget->createEffectWidgets(effectItems, effectArea, coord, true, flag);
             totalSize.height += coord.top-6;
             totalSize.width = std::max(totalSize.width, coord.width);
         }
@@ -584,9 +604,7 @@ namespace MWGui
 
     std::string ToolTips::toString(const int value)
     {
-        std::ostringstream stream;
-        stream << value;
-        return stream.str();
+        return std::to_string(value);
     }
 
     std::string ToolTips::getWeightString(const float weight, const std::string& prefix)
@@ -633,22 +651,92 @@ namespace MWGui
     {
         std::string ret;
         ret += getMiscString(cellref.getOwner(), "Owner");
-        ret += getMiscString(cellref.getFaction(), "Faction");
-        if (cellref.getFactionRank() > 0)
-            ret += getValueString(cellref.getFactionRank(), "Rank");
+        const std::string factionId = cellref.getFaction();
+        if (!factionId.empty())
+        {
+            const MWWorld::ESMStore &store = MWBase::Environment::get().getWorld()->getStore();
+            const ESM::Faction *fact = store.get<ESM::Faction>().search(factionId);
+            if (fact != nullptr)
+            {
+                ret += getMiscString(fact->mName.empty() ? factionId : fact->mName, "Owner Faction");
+                if (cellref.getFactionRank() >= 0)
+                {
+                    int rank = cellref.getFactionRank();
+                    const std::string rankName = fact->mRanks[rank];
+                    if (rankName.empty())
+                        ret += getValueString(cellref.getFactionRank(), "Rank");
+                    else
+                        ret += getMiscString(rankName, "Rank");
+                }
+            }
+        }
 
         std::vector<std::pair<std::string, int> > itemOwners =
                 MWBase::Environment::get().getMechanicsManager()->getStolenItemOwners(cellref.getRefId());
 
-        for (std::vector<std::pair<std::string, int> >::const_iterator it = itemOwners.begin(); it != itemOwners.end(); ++it)
+        for (std::pair<std::string, int>& owner : itemOwners)
         {
-            if (it->second == std::numeric_limits<int>::max())
-                ret += std::string("\nStolen from ") + it->first; // for legacy (ESS) savegames
+            if (owner.second == std::numeric_limits<int>::max())
+                ret += std::string("\nStolen from ") + owner.first; // for legacy (ESS) savegames
             else
-                ret += std::string("\nStolen ") + MyGUI::utility::toString(it->second) + " from " + it->first;
+                ret += std::string("\nStolen ") + MyGUI::utility::toString(owner.second) + " from " + owner.first;
         }
 
         ret += getMiscString(cellref.getGlobalVariable(), "Global");
+        return ret;
+    }
+
+    std::string ToolTips::getDurationString(float duration, const std::string& prefix)
+    {
+        std::string ret;
+        ret = prefix + ": ";
+
+        if (duration < 1.f)
+        {
+            ret += "0 s";
+            return ret;
+        }
+
+        constexpr int secondsPerMinute = 60; // 60 seconds
+        constexpr int secondsPerHour = secondsPerMinute * 60; // 60 minutes
+        constexpr int secondsPerDay = secondsPerHour * 24; // 24 hours
+        constexpr int secondsPerMonth = secondsPerDay * 30; // 30 days
+        constexpr int secondsPerYear = secondsPerDay * 365;
+        int fullDuration = static_cast<int>(duration);
+        int units = 0;
+        int years = fullDuration / secondsPerYear;
+        int months = fullDuration % secondsPerYear / secondsPerMonth;
+        int days = fullDuration % secondsPerYear % secondsPerMonth / secondsPerDay; // Because a year is not exactly 12 "months"
+        int hours = fullDuration % secondsPerDay / secondsPerHour;
+        int minutes = fullDuration % secondsPerHour / secondsPerMinute;
+        int seconds = fullDuration % secondsPerMinute;
+        if (years)
+        {
+            units++;
+            ret += toString(years) + " y ";
+        }
+        if (months)
+        {
+            units++;
+            ret += toString(months) + " mo ";
+        }
+        if (units < 2 && days)
+        {
+            units++;
+            ret += toString(days) + " d ";
+        }
+        if (units < 2 && hours)
+        {
+            units++;
+            ret += toString(hours) + " h ";
+        }
+        if (units >= 2)
+            return ret;
+        if (minutes)
+            ret += toString(minutes) + " min ";
+        if (seconds)
+            ret += toString(seconds) + " s ";
+
         return ret;
     }
 
@@ -719,17 +807,16 @@ namespace MWGui
             MWBase::Environment::get().getWorld()->getStore().get<ESM::Skill>();
 
         bool isFirst = true;
-        MWWorld::Store<ESM::Skill>::iterator it = skills.begin();
-        for (; it != skills.end(); ++it)
+        for (auto& skillPair : skills)
         {
-            if (it->second.mData.mSpecialization == specId)
+            if (skillPair.second.mData.mSpecialization == specId)
             {
                 if (isFirst)
                     isFirst = false;
                 else
                     specText += "\n";
 
-                specText += std::string("#{") + ESM::Skill::sSkillNameIds[it->first] + "}";
+                specText += std::string("#{") + ESM::Skill::sSkillNameIds[skillPair.first] + "}";
             }
         }
         widget->setUserString("Caption_ColumnText", specText);
@@ -754,9 +841,8 @@ namespace MWGui
 
         std::vector<std::string> abilities, powers, spells;
 
-        for (std::vector<std::string>::const_iterator it = sign->mPowers.mList.begin(); it != sign->mPowers.mList.end(); ++it)
+        for (const std::string& spellId : sign->mPowers.mList)
         {
-            const std::string &spellId = *it;
             const ESM::Spell *spell = store.get<ESM::Spell>().search(spellId);
             if (!spell)
                 continue; // Skip spells which cannot be found
@@ -784,14 +870,14 @@ namespace MWGui
 
         for (int category = 0; category < 3; ++category)
         {
-            for (std::vector<std::string>::const_iterator it = categories[category].spells.begin(); it != categories[category].spells.end(); ++it)
+            bool addHeader = true;
+            for (const std::string& spellId : categories[category].spells)
             {
-                if (it == categories[category].spells.begin())
+                if (addHeader)
                 {
                     text += std::string("\n\n#{fontcolourhtml=header}") + std::string("#{") + categories[category].label + "}";
+                    addHeader = false;
                 }
-
-                const std::string &spellId = *it;
 
                 const ESM::Spell *spell = store.get<ESM::Spell>().find(spellId);
                 text += "\n#{fontcolourhtml=normal}" + spell->mName;

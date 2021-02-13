@@ -4,6 +4,7 @@
 #include <MyGUI_ScrollView.h>
 #include <MyGUI_ProgressBar.h>
 #include <MyGUI_ImageBox.h>
+#include <MyGUI_InputManager.h>
 #include <MyGUI_Gui.h>
 
 #include <components/settings/settings.hpp>
@@ -39,8 +40,8 @@ namespace MWGui
       , mBounty(0)
       , mSkillWidgets()
       , mChanged(true)
+      , mMinFullWidth(mMainWidget->getSize().width)
     {
-        setCoord(0,0,498, 342);
 
         const char *names[][2] =
         {
@@ -87,8 +88,41 @@ namespace MWGui
 
     void StatsWindow::onWindowResize(MyGUI::Window* window)
     {
-        mLeftPane->setCoord( MyGUI::IntCoord(0, 0, static_cast<int>(0.44*window->getSize().width), window->getSize().height) );
-        mRightPane->setCoord( MyGUI::IntCoord(static_cast<int>(0.44*window->getSize().width), 0, static_cast<int>(0.56*window->getSize().width), window->getSize().height) );
+        int windowWidth = window->getSize().width;
+        int windowHeight = window->getSize().height;
+
+        //initial values defined in openmw_stats_window.layout, if custom options are not present in .layout, a default is loaded
+        float leftPaneRatio = 0.44;
+        if (mLeftPane->isUserString("LeftPaneRatio"))
+            leftPaneRatio = MyGUI::utility::parseFloat(mLeftPane->getUserString("LeftPaneRatio"));
+
+        int leftOffsetWidth = 24;
+        if (mLeftPane->isUserString("LeftOffsetWidth"))
+            leftOffsetWidth = MyGUI::utility::parseInt(mLeftPane->getUserString("LeftOffsetWidth"));
+
+        float rightPaneRatio = 1.f - leftPaneRatio;
+        int minLeftWidth = static_cast<int>(mMinFullWidth * leftPaneRatio);
+        int minLeftOffsetWidth = minLeftWidth + leftOffsetWidth;
+
+        //if there's no space for right pane
+        mRightPane->setVisible(windowWidth >= minLeftOffsetWidth);
+        if (!mRightPane->getVisible())
+        {
+            mLeftPane->setCoord(MyGUI::IntCoord(0, 0, windowWidth - leftOffsetWidth, windowHeight));
+        }
+        //if there's some space for right pane
+        else if (windowWidth < mMinFullWidth)
+        {
+            mLeftPane->setCoord(MyGUI::IntCoord(0, 0, minLeftWidth, windowHeight));
+            mRightPane->setCoord(MyGUI::IntCoord(minLeftWidth, 0, windowWidth - minLeftWidth, windowHeight));
+        }
+        //if there's enough space for both panes
+        else
+        {
+            mLeftPane->setCoord(MyGUI::IntCoord(0, 0, static_cast<int>(leftPaneRatio*windowWidth), windowHeight));
+            mRightPane->setCoord(MyGUI::IntCoord(static_cast<int>(leftPaneRatio*windowWidth), 0, static_cast<int>(rightPaneRatio*windowWidth), windowHeight));
+        }
+
         // Canvas size must be expressed with VScroll disabled, otherwise MyGUI would expand the scroll area when the scrollbar is hidden
         mSkillView->setVisibleVScroll(false);
         mSkillView->setCanvasSize (mSkillView->getWidth(), mSkillView->getCanvasSize().height);
@@ -125,9 +159,7 @@ namespace MWGui
         for (int i=0; ids[i]; ++i)
             if (ids[i]==id)
             {
-                std::ostringstream valueString;
-                valueString << value.getModified();
-                setText (id, valueString.str());
+                setText (id, std::to_string(value.getModified()));
 
                 MyGUI::TextBox* box;
                 getWidget(box, id);
@@ -280,11 +312,9 @@ namespace MWGui
         std::set<int> skillSet;
         std::copy(major.begin(), major.end(), std::inserter(skillSet, skillSet.begin()));
         std::copy(minor.begin(), minor.end(), std::inserter(skillSet, skillSet.begin()));
-        boost::array<ESM::Skill::SkillEnum, ESM::Skill::Length>::const_iterator end = ESM::Skill::sSkillIds.end();
         mMiscSkills.clear();
-        for (boost::array<ESM::Skill::SkillEnum, ESM::Skill::Length>::const_iterator it = ESM::Skill::sSkillIds.begin(); it != end; ++it)
+        for (const int skill : ESM::Skill::sSkillIds)
         {
-            int skill = *it;
             if (skillSet.find(skill) == skillSet.end())
                 mMiscSkills.push_back(skill);
         }
@@ -437,16 +467,11 @@ namespace MWGui
 
         addGroup(MWBase::Environment::get().getWindowManager()->getGameSettingString(titleId, titleDefault), coord1, coord2);
 
-        SkillList::const_iterator end = skills.end();
-        for (SkillList::const_iterator it = skills.begin(); it != end; ++it)
+        for (const int skillId : skills)
         {
-            int skillId = *it;
             if (skillId < 0 || skillId >= ESM::Skill::Length) // Skip unknown skill indexes
                 continue;
             const std::string &skillNameId = ESM::Skill::sSkillNameIds[skillId];
-            const MWMechanics::SkillValue &stat = mSkillValues.find(skillId)->second;
-            int base = stat.getBase();
-            int modified = stat.getModified();
 
             const MWWorld::ESMStore &esmStore =
                 MWBase::Environment::get().getWorld()->getStore();
@@ -458,13 +483,9 @@ namespace MWGui
             const ESM::Attribute* attr =
                 esmStore.get<ESM::Attribute>().find(skill->mData.mAttribute);
 
-            std::string state = "normal";
-            if (modified > base)
-                state = "increased";
-            else if (modified < base)
-                state = "decreased";
             std::pair<MyGUI::TextBox*, MyGUI::TextBox*> widgets = addValueItem(MWBase::Environment::get().getWindowManager()->getGameSettingString(skillNameId, skillNameId),
-                MyGUI::utility::toString(static_cast<int>(modified)), state, coord1, coord2);
+                "", "normal", coord1, coord2);
+            mSkillWidgetMap[skillId] = widgets;
 
             for (int i=0; i<2; ++i)
             {
@@ -475,27 +496,9 @@ namespace MWGui
                 mSkillWidgets[mSkillWidgets.size()-1-i]->setUserString("Caption_SkillAttribute", "#{sGoverningAttribute}: #{" + attr->mName + "}");
                 mSkillWidgets[mSkillWidgets.size()-1-i]->setUserString("ImageTexture_SkillImage", icon);
                 mSkillWidgets[mSkillWidgets.size()-1-i]->setUserString("Range_SkillProgress", "100");
-                if (base < 100)
-                {
-                    mSkillWidgets[mSkillWidgets.size()-1-i]->setUserString("Visible_SkillMaxed", "false");
-                    mSkillWidgets[mSkillWidgets.size()-1-i]->setUserString("UserData^Hidden_SkillMaxed", "true");
-
-                    mSkillWidgets[mSkillWidgets.size()-1-i]->setUserString("Visible_SkillProgressVBox", "true");
-                    mSkillWidgets[mSkillWidgets.size()-1-i]->setUserString("UserData^Hidden_SkillProgressVBox", "false");
-
-                    setSkillProgress(mSkillWidgets[mSkillWidgets.size()-1-i], stat.getProgress(), skillId);
-                }
-                else
-                {
-                    mSkillWidgets[mSkillWidgets.size()-1-i]->setUserString("Visible_SkillMaxed", "true");
-                    mSkillWidgets[mSkillWidgets.size()-1-i]->setUserString("UserData^Hidden_SkillMaxed", "false");
-
-                    mSkillWidgets[mSkillWidgets.size()-1-i]->setUserString("Visible_SkillProgressVBox", "false");
-                    mSkillWidgets[mSkillWidgets.size()-1-i]->setUserString("UserData^Hidden_SkillProgressVBox", "true");
-                }
             }
 
-            mSkillWidgetMap[skillId] = widgets;
+            setValue(static_cast<ESM::Skill::SkillEnum>(skillId), mSkillValues.find(skillId)->second);
         }
     }
 
@@ -503,9 +506,9 @@ namespace MWGui
     {
         mChanged = false;
 
-        for (std::vector<MyGUI::Widget*>::iterator it = mSkillWidgets.begin(); it != mSkillWidgets.end(); ++it)
+        for (MyGUI::Widget* widget : mSkillWidgets)
         {
-            MyGUI::Gui::getInstance().destroyWidget(*it);
+            MyGUI::Gui::getInstance().destroyWidget(widget);
         }
         mSkillWidgets.clear();
 
@@ -554,11 +557,11 @@ namespace MWGui
             const std::set<std::string> &expelled = PCstats.getExpelled();
 
             bool firstFaction=true;
-            FactionList::const_iterator end = mFactions.end();
-            for (FactionList::const_iterator it = mFactions.begin(); it != end; ++it)
+            for (auto& factionPair : mFactions)
             {
+                const std::string& factionId = factionPair.first;
                 const ESM::Faction *faction =
-                    store.get<ESM::Faction>().find(it->first);
+                    store.get<ESM::Faction>().find(factionId);
                 if (faction->mData.mIsHidden == 1)
                     continue;
 
@@ -579,11 +582,11 @@ namespace MWGui
 
                 text += std::string("#{fontcolourhtml=header}") + faction->mName;
 
-                if (expelled.find(it->first) != expelled.end())
+                if (expelled.find(factionId) != expelled.end())
                     text += "\n#{fontcolourhtml=normal}#{sExpelled}";
                 else
                 {
-                    int rank = it->second;
+                    int rank = factionPair.second;
                     rank = std::max(0, std::min(9, rank));
                     text += std::string("\n#{fontcolourhtml=normal}") + faction->mRanks[rank];
 
@@ -683,7 +686,13 @@ namespace MWGui
 
     void StatsWindow::onTitleDoubleClicked()
     {
-        if (!mPinned)
+        if (MyGUI::InputManager::getInstance().isShiftPressed())
+        {
+            MWBase::Environment::get().getWindowManager()->toggleMaximized(this);
+            MyGUI::Window* t = mMainWidget->castType<MyGUI::Window>();
+            onWindowResize(t);
+        }
+        else if (!mPinned)
             MWBase::Environment::get().getWindowManager()->toggleVisible(GW_Stats);
     }
 }

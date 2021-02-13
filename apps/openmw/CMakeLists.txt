@@ -4,11 +4,11 @@ set(GAME
     engine.cpp
 
     ${CMAKE_SOURCE_DIR}/files/windows/openmw.rc
+    ${CMAKE_SOURCE_DIR}/files/windows/openmw.exe.manifest
 )
 
 if (ANDROID)
-    set(GAME ${GAME} android_commandLine.cpp)
-    set(GAME ${GAME} android_main.c)
+    set(GAME ${GAME} android_main.cpp)
 endif()
 
 set(GAME_HEADER
@@ -18,10 +18,10 @@ set(GAME_HEADER
 source_group(game FILES ${GAME} ${GAME_HEADER})
 
 add_openmw_dir (mwrender
-    actors objects renderingmanager animation rotatecontroller sky npcanimation vismask
+    actors objects renderingmanager animation rotatecontroller sky npcanimation
     creatureanimation effectmanager util renderinginterface pathgrid rendermode weaponanimation
     bulletdebugdraw globalmap characterpreview camera localmap water terrainstorage ripplesimulation
-    renderbin actoranimation landmanager
+    renderbin actoranimation landmanager navmesh actorspaths recastmesh
     )
 
 add_openmw_dir (mwinput
@@ -31,7 +31,7 @@ add_openmw_dir (mwinput
 add_openmw_dir (mwgui
     layout textinput widgets race class birth review windowmanagerimp console dialogue
     windowbase statswindow messagebox journalwindow charactercreation
-    mapwindow windowpinnablebase tooltips scrollwindow bookwindow
+    mapwindow windowpinnablebase tooltips scrollwindow bookwindow resourceskin
     formatting inventorywindow container hud countdialog tradewindow settingswindow
     confirmationdialog alchemywindow referenceinterface spellwindow mainmenu quickkeysmenu
     itemselection spellbuyingwindow loadingscreen levelupdialog waitdialog spellcreationdialog
@@ -62,7 +62,7 @@ add_openmw_dir (mwsound
 add_openmw_dir (mwworld
     refdata worldimp scene globals class action nullaction actionteleport
     containerstore actiontalk actiontake manualref player cellvisitors failedaction
-    cells localscripts customdata inventorystore ptr actionopen actionread
+    cells localscripts customdata inventorystore ptr actionopen actionread actionharvest
     actionequip timestamp actionalchemy cellstore actionapply actioneat
     store esmstore recordcmp fallback actionrepair actionsoulgem livecellref actiondoor
     contentloader esmloader actiontrap cellreflist cellref physicssystem weather projectilemanager
@@ -70,7 +70,9 @@ add_openmw_dir (mwworld
     )
 
 add_openmw_dir (mwphysics
-    physicssystem trace collisiontype actor convert
+    physicssystem trace collisiontype actor convert object heightfield closestnotmerayresultcallback
+    contacttestresultcallback deepestnotmecontacttestresultcallback stepper movementsolver
+    closestnotmeconvexresultcallback
     )
 
 add_openmw_dir (mwclass
@@ -81,9 +83,9 @@ add_openmw_dir (mwclass
 add_openmw_dir (mwmechanics
     mechanicsmanagerimp stat creaturestats magiceffects movement actorutil
     drawstate spells activespells npcstats aipackage aisequence aipursue alchemy aiwander aitravel aifollow aiavoiddoor aibreathe
-    aicast aiescort aiface aiactivate aicombat repair enchanting pathfinding pathgrid security spellsuccess spellcasting
+    aicast aiescort aiface aiactivate aicombat recharge repair enchanting pathfinding pathgrid security spellsuccess spellcasting
     disease pickpocket levelledlist combat steering obstacle autocalcspell difficultyscaling aicombataction actor summoning
-    character actors objects aistate coordinateconverter trading weaponpriority spellpriority
+    character actors objects aistate coordinateconverter trading weaponpriority spellpriority weapontype
     )
 
 add_openmw_dir (mwstate
@@ -125,6 +127,7 @@ target_link_libraries(openmw
     ${OSGDB_LIBRARIES}
     ${OSGVIEWER_LIBRARIES}
     ${OSGGA_LIBRARIES}
+    ${OSGSHADOW_LIBRARIES}
     ${Boost_SYSTEM_LIBRARY}
     ${Boost_THREAD_LIBRARY}
     ${Boost_FILESYSTEM_LIBRARY}
@@ -133,6 +136,7 @@ target_link_libraries(openmw
     ${FFmpeg_LIBRARIES}
     ${MyGUI_LIBRARIES}
     ${SDL2_LIBRARY}
+    ${RecastNavigation_LIBRARIES}
     "osg-ffmpeg-videoplayer"
     "oics"
     components
@@ -187,8 +191,6 @@ if(APPLE)
     configure_file("${OpenMW_BINARY_DIR}/settings-default.cfg" ${BUNDLE_RESOURCES_DIR} COPYONLY)
     configure_file("${OpenMW_BINARY_DIR}/openmw.cfg" ${BUNDLE_RESOURCES_DIR} COPYONLY)
     configure_file("${OpenMW_BINARY_DIR}/gamecontrollerdb.txt" ${BUNDLE_RESOURCES_DIR} COPYONLY)
-    configure_file("${OpenMW_BINARY_DIR}/gamecontrollerdb_204.txt" ${BUNDLE_RESOURCES_DIR} COPYONLY)
-    configure_file("${OpenMW_BINARY_DIR}/gamecontrollerdb_205.txt" ${BUNDLE_RESOURCES_DIR} COPYONLY)
 
     add_custom_command(TARGET openmw
         POST_BUILD

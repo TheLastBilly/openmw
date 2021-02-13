@@ -29,10 +29,9 @@
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/lightutil.hpp>
 #include <components/sceneutil/lightmanager.hpp>
-#include <components/fallback/fallback.hpp>
+#include <components/sceneutil/vismask.hpp>
 
 #include "actor.hpp"
-#include "mask.hpp"
 
 
 const float CSVRender::Object::MarkerShaftWidth = 30;
@@ -59,7 +58,7 @@ namespace
 
 
 CSVRender::ObjectTag::ObjectTag (Object* object)
-: TagBase (Mask_Reference), mObject (object)
+: TagBase (SceneUtil::Mask_EditorReference), mObject (object)
 {}
 
 QString CSVRender::ObjectTag::getToolTip (bool hideBasics) const
@@ -140,17 +139,8 @@ void CSVRender::Object::update()
 
     if (light)
     {
-        const Fallback::Map* fallback = mData.getFallbackMap();
-        static bool outQuadInLin = fallback->getFallbackBool("LightAttenuation_OutQuadInLin");
-        static bool useQuadratic = fallback->getFallbackBool("LightAttenuation_UseQuadratic");
-        static float quadraticValue = fallback->getFallbackFloat("LightAttenuation_QuadraticValue");
-        static float quadraticRadiusMult = fallback->getFallbackFloat("LightAttenuation_QuadraticRadiusMult");
-        static bool useLinear = fallback->getFallbackBool("LightAttenuation_UseLinear");
-        static float linearRadiusMult = fallback->getFallbackFloat("LightAttenuation_LinearRadiusMult");
-        static float linearValue = fallback->getFallbackFloat("LightAttenuation_LinearValue");
         bool isExterior = false; // FIXME
-        SceneUtil::addLight(mBaseNode, light, Mask_ParticleSystem, Mask_Lighting, isExterior, outQuadInLin, useQuadratic,
-                            quadraticValue, quadraticRadiusMult, useLinear, linearRadiusMult, linearValue);
+        SceneUtil::addLight(mBaseNode, light, isExterior);
     }
 }
 
@@ -439,7 +429,7 @@ CSVRender::Object::Object (CSMWorld::Data& data, osg::Group* parentNode,
 
     parentNode->addChild (mRootNode);
 
-    mRootNode->setNodeMask(Mask_Reference);
+    mRootNode->setNodeMask(SceneUtil::Mask_EditorReference);
 
     if (referenceable)
     {
@@ -485,6 +475,16 @@ void CSVRender::Object::setSelected(bool selected)
 bool CSVRender::Object::getSelected() const
 {
     return mSelected;
+}
+
+osg::ref_ptr<osg::Group> CSVRender::Object::getRootNode()
+{
+    return mRootNode;
+}
+
+osg::ref_ptr<osg::Group> CSVRender::Object::getBaseNode()
+{
+    return mBaseNode;
 }
 
 bool CSVRender::Object::referenceableDataChanged (const QModelIndex& topLeft,
@@ -670,6 +670,33 @@ void CSVRender::Object::apply (CSMWorld::CommandMacro& commands)
 
     if (mOverrideFlags & Override_Position)
     {
+        //Do cell check first so positions can be compared
+        const CSMWorld::CellRef& ref = collection.getRecord(recordIndex).get();
+
+        if (CSMWorld::CellCoordinates::isExteriorCell(ref.mCell))
+        {
+            // Find cell index at new position
+            std::pair<int, int> cellIndex = CSMWorld::CellCoordinates::coordinatesToCellIndex(
+                mPositionOverride.pos[0], mPositionOverride.pos[1]);
+            std::pair<int, int> originalIndex = ref.getCellIndex();
+
+            int cellColumn = collection.findColumnIndex (static_cast<CSMWorld::Columns::ColumnId> (
+                CSMWorld::Columns::ColumnId_Cell));
+            int refNumColumn = collection.findColumnIndex (static_cast<CSMWorld::Columns::ColumnId> (
+                CSMWorld::Columns::ColumnId_RefNum));
+
+            if (cellIndex != originalIndex)
+            {
+                /// \todo figure out worldspace (not important until multiple worldspaces are supported)
+                std::string cellId = CSMWorld::CellCoordinates (cellIndex).getId ("");
+
+                commands.push (new CSMWorld::ModifyCommand (*model,
+                    model->index (recordIndex, cellColumn), QString::fromUtf8 (cellId.c_str())));
+                commands.push (new CSMWorld::ModifyCommand( *model,
+                    model->index (recordIndex, refNumColumn), 0));
+            }
+        }
+
         for (int i=0; i<3; ++i)
         {
             int column = collection.findColumnIndex (static_cast<CSMWorld::Columns::ColumnId> (
@@ -677,20 +704,6 @@ void CSVRender::Object::apply (CSMWorld::CommandMacro& commands)
 
             commands.push (new CSMWorld::ModifyCommand (*model,
                 model->index (recordIndex, column), mPositionOverride.pos[i]));
-        }
-
-        int column = collection.findColumnIndex (static_cast<CSMWorld::Columns::ColumnId> (
-            CSMWorld::Columns::ColumnId_Cell));
-
-        if (CSMWorld::CellCoordinates::isExteriorCell(collection.getRecord (recordIndex).get().mCell))
-        {
-            std::pair<int, int> cellIndex = collection.getRecord (recordIndex).get().getCellIndex();
-
-            /// \todo figure out worldspace (not important until multiple worldspaces are supported)
-            std::string cellId = CSMWorld::CellCoordinates (cellIndex).getId ("");
-
-            commands.push (new CSMWorld::ModifyCommand (*model,
-                model->index (recordIndex, column), QString::fromUtf8 (cellId.c_str())));
         }
     }
 
@@ -702,7 +715,7 @@ void CSVRender::Object::apply (CSMWorld::CommandMacro& commands)
                 CSMWorld::Columns::ColumnId_PositionXRot+i));
 
             commands.push (new CSMWorld::ModifyCommand (*model,
-                model->index (recordIndex, column), mPositionOverride.rot[i]));
+                model->index (recordIndex, column), osg::RadiansToDegrees(mPositionOverride.rot[i])));
         }
     }
 

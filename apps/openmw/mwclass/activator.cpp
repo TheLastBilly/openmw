@@ -2,10 +2,11 @@
 
 #include <components/esm/loadacti.hpp>
 #include <components/misc/rng.hpp>
+#include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/vismask.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
-#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/world.hpp"
 
 #include "../mwworld/cellstore.hpp"
@@ -30,8 +31,10 @@ namespace MWClass
 
     void Activator::insertObjectRendering (const MWWorld::Ptr& ptr, const std::string& model, MWRender::RenderingInterface& renderingInterface) const
     {
-        if (!model.empty()) {
+        if (!model.empty())
+        {
             renderingInterface.getObjects().insertModel(ptr, model, true);
+            ptr.getRefData().getBaseNode()->setNodeMask(SceneUtil::Mask_Static);
         }
     }
 
@@ -86,9 +89,7 @@ namespace MWClass
 
     bool Activator::hasToolTip (const MWWorld::ConstPtr& ptr) const
     {
-        const MWWorld::LiveCellRef<ESM::Activator> *ref = ptr.get<ESM::Activator>();
-
-        return (ref->mBase->mName != "");
+        return !getName(ptr).empty();
     }
 
     bool Activator::allowTelekinesis(const MWWorld::ConstPtr &ptr) const {
@@ -100,7 +101,7 @@ namespace MWClass
         const MWWorld::LiveCellRef<ESM::Activator> *ref = ptr.get<ESM::Activator>();
 
         MWGui::ToolTipInfo info;
-        info.caption = ref->mBase->mName + MWGui::ToolTips::getCountString(count);
+        info.caption = MyGUI::TextIterator::toTagsString(getName(ptr)) + MWGui::ToolTips::getCountString(count);
 
         std::string text;
         if (MWBase::Environment::get().getWindowManager()->getFullHelp())

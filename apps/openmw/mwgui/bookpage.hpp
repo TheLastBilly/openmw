@@ -6,6 +6,7 @@
 #include "MyGUI_FontManager.h"
 
 #include <functional>
+#include <memory>
 #include <stdint.h>
 
 #include <components/settings/settings.hpp>
@@ -33,6 +34,8 @@ namespace MWGui
         /// right edge. The second integer is the height of all
         /// text combined prior to pagination.
         virtual std::pair <unsigned int, unsigned int> getSize () const = 0;
+
+        virtual ~TypesetBook() = default;
     };
 
     struct GlyphInfo
@@ -86,8 +89,7 @@ namespace MWGui
         typedef uint8_t const * Utf8Point;
         typedef std::pair <Utf8Point, Utf8Point> Utf8Span;
 
-
-
+        virtual ~BookTypesetter() = default;
 
         enum Alignment {
             AlignLeft   = -1,

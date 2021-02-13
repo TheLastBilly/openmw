@@ -396,7 +396,7 @@ namespace CSMWorld
         ESM::Region::SoundRef soundRef = soundList[subRowIndex];
         switch (subColIndex)
         {
-            case 0: return QString(soundRef.mSound.toString().c_str());
+            case 0: return QString(soundRef.mSound.c_str());
             case 1: return soundRef.mChance;
             default: throw std::runtime_error("Region sounds subcolumn index out of range");
         }
@@ -867,6 +867,8 @@ namespace CSMWorld
         switch (subColIndex)
         {
             case 0: return isInterior;
+            // While the ambient information is not necessarily valid if the subrecord wasn't loaded,
+            // the user should still be allowed to edit it
             case 1: return (isInterior && !behaveLikeExterior) ?
                     cell.mAmbi.mAmbient : QVariant(QVariant::UserType);
             case 2: return (isInterior && !behaveLikeExterior) ?
@@ -912,7 +914,10 @@ namespace CSMWorld
             case 1:
             {
                 if (isInterior && !behaveLikeExterior)
+                {
                     cell.mAmbi.mAmbient = static_cast<int32_t>(value.toInt());
+                    cell.setHasAmbient(true);
+                }
                 else
                     return; // return without saving
                 break;
@@ -920,7 +925,10 @@ namespace CSMWorld
             case 2:
             {
                 if (isInterior && !behaveLikeExterior)
+                {
                     cell.mAmbi.mSunlight = static_cast<int32_t>(value.toInt());
+                    cell.setHasAmbient(true);
+                }
                 else
                     return; // return without saving
                 break;
@@ -928,7 +936,10 @@ namespace CSMWorld
             case 3:
             {
                 if (isInterior && !behaveLikeExterior)
+                {
                     cell.mAmbi.mFog = static_cast<int32_t>(value.toInt());
+                    cell.setHasAmbient(true);
+                }
                 else
                     return; // return without saving
                 break;
@@ -936,7 +947,10 @@ namespace CSMWorld
             case 4:
             {
                 if (isInterior && !behaveLikeExterior)
+                {
                     cell.mAmbi.mFogDensity = value.toFloat();
+                    cell.setHasAmbient(true);
+                }
                 else
                     return; // return without saving
                 break;
@@ -1087,6 +1101,85 @@ namespace CSMWorld
     }
 
     int RegionWeatherAdapter::getRowsCount(const Record<ESM::Region>& record) const
+    {
+        return 10;
+    }
+
+    FactionRanksAdapter::FactionRanksAdapter () {}
+
+    void FactionRanksAdapter::addRow(Record<ESM::Faction>& record, int position) const
+    {
+        throw std::logic_error ("cannot add a row to a fixed table");
+    }
+
+    void FactionRanksAdapter::removeRow(Record<ESM::Faction>& record, int rowToRemove) const
+    {
+        throw std::logic_error ("cannot remove a row from a fixed table");
+    }
+
+    void FactionRanksAdapter::setTable(Record<ESM::Faction>& record,
+            const NestedTableWrapperBase& nestedTable) const
+    {
+        throw std::logic_error ("table operation not supported");
+    }
+
+    NestedTableWrapperBase* FactionRanksAdapter::table(const Record<ESM::Faction>& record) const
+    {
+        throw std::logic_error ("table operation not supported");
+    }
+
+    QVariant FactionRanksAdapter::getData(const Record<ESM::Faction>& record,
+            int subRowIndex, int subColIndex) const
+    {
+        ESM::Faction faction = record.get();
+
+        if (subRowIndex < 0 || subRowIndex >= static_cast<int>(sizeof(faction.mData.mRankData)/sizeof(faction.mData.mRankData[0])))
+            throw std::runtime_error ("index out of range");
+
+        auto& rankData = faction.mData.mRankData[subRowIndex];
+
+        switch (subColIndex)
+        {
+            case 0: return QString(faction.mRanks[subRowIndex].c_str());
+            case 1: return rankData.mAttribute1;
+            case 2: return rankData.mAttribute2;
+            case 3: return rankData.mSkill1;
+            case 4: return rankData.mSkill2;
+            case 5: return rankData.mFactReaction;
+            default: throw std::runtime_error("Rank subcolumn index out of range");
+        }
+    }
+
+    void FactionRanksAdapter::setData(Record<ESM::Faction>& record,
+            const QVariant& value, int subRowIndex, int subColIndex) const
+    {
+        ESM::Faction faction = record.get();
+
+        if (subRowIndex < 0 || subRowIndex >= static_cast<int>(sizeof(faction.mData.mRankData)/sizeof(faction.mData.mRankData[0])))
+            throw std::runtime_error ("index out of range");
+
+        auto& rankData = faction.mData.mRankData[subRowIndex];
+
+        switch (subColIndex)
+        {
+            case 0: faction.mRanks[subRowIndex] = value.toString().toUtf8().constData(); break;
+            case 1: rankData.mAttribute1 = value.toInt(); break;
+            case 2: rankData.mAttribute2 = value.toInt(); break;
+            case 3: rankData.mSkill1 = value.toInt(); break;
+            case 4: rankData.mSkill2 = value.toInt(); break;
+            case 5: rankData.mFactReaction = value.toInt(); break;
+            default: throw std::runtime_error("Rank index out of range");
+        }
+
+        record.setModified (faction);
+    }
+
+    int FactionRanksAdapter::getColumnsCount(const Record<ESM::Faction>& record) const
+    {
+        return 6;
+    }
+
+    int FactionRanksAdapter::getRowsCount(const Record<ESM::Faction>& record) const
     {
         return 10;
     }

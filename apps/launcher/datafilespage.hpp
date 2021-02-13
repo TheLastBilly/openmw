@@ -61,10 +61,13 @@ namespace Launcher
         void slotProfileRenamed(const QString &previous, const QString &current);
         void slotProfileDeleted(const QString &item);
         void slotAddonDataChanged ();
+        void slotRefreshButtonClicked ();
 
-        void updateOkButton(const QString &text);
+        void updateNewProfileOkButton(const QString &text);
+        void updateCloneProfileOkButton(const QString &text);
 
         void on_newProfileAction_triggered();
+        void on_cloneProfileAction_triggered();
         void on_deleteProfileAction_triggered();
 
     public:
@@ -73,7 +76,8 @@ namespace Launcher
 
     private:
 
-        TextInputDialog *mProfileDialog;
+        TextInputDialog *mNewProfileDialog;
+        TextInputDialog *mCloneProfileDialog;
 
         Files::ConfigurationManager &mCfgMgr;
 
@@ -97,6 +101,7 @@ namespace Launcher
         void checkForDefaultProfile();
         void populateFileViews(const QString& contentModelName);
         void reloadCells(QStringList selectedFiles);
+        void refreshDataFilesView ();
 
         class PathIterator
         {

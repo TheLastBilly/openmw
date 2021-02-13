@@ -1,7 +1,6 @@
 #include "actionequip.hpp"
 
 #include "../mwbase/environment.hpp"
-#include "../mwbase/world.hpp"
 #include "../mwbase/windowmanager.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
@@ -94,7 +93,7 @@ namespace MWWorld
         {
             for (slot=slots_.first.begin();slot!=slots_.first.end(); ++slot)
             {
-                invStore.unequipSlot(*slot, actor);
+                invStore.unequipSlot(*slot, actor, false);
                 if (slot+1 != slots_.first.end())
                     invStore.equip(*slot, invStore.getSlot(*(slot+1)), actor);
                 else

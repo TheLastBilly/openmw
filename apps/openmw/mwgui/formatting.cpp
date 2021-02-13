@@ -4,14 +4,10 @@
 #include <MyGUI_Gui.h>
 #include <MyGUI_EditBox.h>
 #include <MyGUI_ImageBox.h>
-#include <MyGUI_FontManager.h>
 
 // correctBookartPath
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
-
-#include <boost/algorithm/string/replace.hpp>
-#include <boost/algorithm/string/predicate.hpp>
 
 #include <components/debug/debuglog.hpp>
 #include <components/interpreter/defines.hpp>
@@ -30,7 +26,7 @@ namespace MWGui
             MWScript::InterpreterContext interpreterContext(nullptr, MWWorld::Ptr()); // empty arguments, because there is no locals or actor
             mText = Interpreter::fixDefinesBook(mText, interpreterContext);
 
-            boost::algorithm::replace_all(mText, "\r", "");
+            Misc::StringUtils::replaceAll(mText, "\r", "");
 
             // vanilla game does not show any text after the last EOL tag.
             const std::string lowerText = Misc::StringUtils::lowerCase(mText);
@@ -258,16 +254,6 @@ namespace MWGui
                     if (plainText.size() && brAtEnd)
                         plainText.erase(plainText.end()-1);
 
-#if (MYGUI_VERSION < MYGUI_DEFINE_VERSION(3, 2, 2))
-                    // splitting won't be fully functional until 3.2.2 (see TextElement::pageSplit())
-                    // hack: prevent newlines at the end of the book possibly creating unnecessary pages
-                    if (event == BookTextParser::Event_EOF)
-                    {
-                        while (plainText.size() && plainText[plainText.size()-1] == '\n')
-                            plainText.erase(plainText.end()-1);
-                    }
-#endif
-
                     if (!plainText.empty() || brBeforeLastTag || isPrevImg)
                     {
                         TextElement elem(paper, pag, mBlockStyle,
@@ -447,8 +433,6 @@ namespace MWGui
             int ret = mPaginator.getCurrentTop() + lastLine * lineHeight;
 
             // first empty lines that would go to the next page should be ignored
-            // unfortunately, getLineInfo method won't be available until 3.2.2
-#if (MYGUI_VERSION >= MYGUI_DEFINE_VERSION(3, 2, 2))
             mPaginator.setIgnoreLeadingEmptyLines(true);
 
             const MyGUI::VectorLineInfo & lines = mEditBox->getSubWidgetText()->castType<MyGUI::EditText>()->getLineInfo();
@@ -462,7 +446,6 @@ namespace MWGui
                     break;
                 }
             }
-#endif
             return ret;
         }
 

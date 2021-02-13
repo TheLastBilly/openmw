@@ -44,7 +44,8 @@ void Config::GameSettings::validatePaths()
     QStringList paths = mSettings.values(QString("data"));
     Files::PathContainer dataDirs;
 
-    foreach (const QString &path, paths) {
+    for (const QString &path : paths)
+    {
         QByteArray bytes = path.toUtf8();
         dataDirs.push_back(Files::PathContainer::value_type(std::string(bytes.constData(), bytes.length())));
     }
@@ -338,6 +339,9 @@ bool Config::GameSettings::writeFileWithComments(QFile &file)
             if (!comments.empty() && index != -1 && settingRegex.captureCount() >= 2 &&
                 mUserSettings.find(settingRegex.cap(1)) != mUserSettings.end())
             {
+                if (commentStart == fileCopy.end())
+                    throw std::runtime_error("Config::GameSettings: failed to parse settings - iterator is past of end of settings file");
+
                 for (std::vector<QString>::const_iterator it = comments.begin(); it != comments.end(); ++it)
                 {
                     *commentStart = *it;
@@ -508,7 +512,7 @@ bool Config::GameSettings::hasMaster()
 void Config::GameSettings::setContentList(const QStringList& fileNames)
 {
     remove(sContentKey);
-    foreach(const QString& fileName, fileNames)
+    for (const QString& fileName : fileNames)
     {
         setMultiValue(sContentKey, fileName);
     }

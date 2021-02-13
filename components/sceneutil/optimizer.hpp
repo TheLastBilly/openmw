@@ -22,6 +22,8 @@
 #include <osg/Transform>
 #include <osg/Texture2D>
 
+#include <components/sceneutil/vismask.hpp>
+
 //#include <osgUtil/Export>
 
 #include <set>
@@ -42,7 +44,7 @@ class BaseOptimizerVisitor : public osg::NodeVisitor
             _optimizer(optimizer),
             _operationType(operation)
         {
-            setNodeMaskOverride(0xffffffff);
+            setNodeMaskOverride(SceneUtil::Mask_Default);
         }
 
         inline bool isOperationPermissibleForObject(const osg::StateSet* object) const;
@@ -340,6 +342,7 @@ class Optimizer
                 virtual void apply(osg::Group& group);
                 virtual void apply(osg::Transform& transform);
                 virtual void apply(osg::LOD& lod);
+                virtual void apply(osg::Switch& switchNode);
 
                 bool isOperationPermissible(osg::Node& node);
 
@@ -360,6 +363,7 @@ class Optimizer
 
             virtual void apply(osg::Group& group);
             virtual void apply(osg::LOD& lod);
+            virtual void apply(osg::Switch& switchNode);
         };
 
         class MergeGeometryVisitor : public BaseOptimizerVisitor

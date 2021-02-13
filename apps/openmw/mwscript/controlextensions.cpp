@@ -16,7 +16,6 @@
 #include "../mwworld/ptr.hpp"
 
 #include "../mwmechanics/npcstats.hpp"
-#include "../mwmechanics/movement.hpp"
 
 #include "interpretercontext.hpp"
 #include "ref.hpp"
@@ -168,12 +167,15 @@ namespace MWScript
 
                 virtual void execute (Interpreter::Runtime& runtime)
                 {
-                    MWWorld::Ptr ptr = MWBase::Environment::get().getWorld ()->getPlayerPtr();
-                    const MWWorld::Class &cls = ptr.getClass();
+                    MWWorld::Ptr ptr = MWBase::Environment::get().getWorld()->getPlayerPtr();
+                    MWMechanics::CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
+                    MWBase::World* world = MWBase::Environment::get().getWorld();
 
-                    bool isRunning = MWBase::Environment::get().getMechanicsManager()->isRunning(ptr);
+                    bool stanceOn = stats.getStance(MWMechanics::CreatureStats::Stance_Run);
+                    bool running = MWBase::Environment::get().getMechanicsManager()->isRunning(ptr);
+                    bool inair = !world->isOnGround(ptr) && !world->isSwimming(ptr) && !world->isFlying(ptr);
 
-                    runtime.push (isRunning && cls.getCreatureStats(ptr).getStance(MWMechanics::CreatureStats::Stance_Run));
+                    runtime.push(stanceOn && (running || inair));
                 }
         };
 
@@ -184,11 +186,7 @@ namespace MWScript
                 virtual void execute (Interpreter::Runtime& runtime)
                 {
                     MWWorld::Ptr ptr = MWBase::Environment::get().getWorld()->getPlayerPtr();
-                    const MWWorld::Class &cls = ptr.getClass();
-
-                    bool isSneaking = MWBase::Environment::get().getMechanicsManager()->isSneaking(ptr);
-
-                    runtime.push (isSneaking && cls.getCreatureStats(ptr).getStance(MWMechanics::CreatureStats::Stance_Sneak));
+                    runtime.push(MWBase::Environment::get().getMechanicsManager()->isSneaking(ptr));
                 }
         };
 

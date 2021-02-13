@@ -25,7 +25,7 @@ namespace MWScript
     ScriptManager::ScriptManager (const MWWorld::ESMStore& store,
         Compiler::Context& compilerContext, int warningsMode,
         const std::vector<std::string>& scriptBlacklist)
-    : mErrorHandler (std::cerr), mStore (store),
+    : mErrorHandler(), mStore (store),
       mCompilerContext (compilerContext), mParser (mErrorHandler, mCompilerContext),
       mOpcodesInstalled (false), mGlobalScripts (store)
     {
@@ -72,8 +72,7 @@ namespace MWScript
 
             if (!Success)
             {
-                Log(Debug::Warning)
-                    << "Warning: compiling failed: " << name;
+                Log(Debug::Error) << "Error: script compiling failed: " << name;
             }
 
             if (Success)
@@ -172,7 +171,7 @@ namespace MWScript
         {
             Compiler::Locals locals;
 
-            mErrorHandler.setContext(name2 + "[local variables]");
+            const Compiler::ContextOverride override(mErrorHandler, name2 + "[local variables]");
 
             std::istringstream stream (script->mScriptText);
             Compiler::QuickFileParser parser (mErrorHandler, mCompilerContext, locals);

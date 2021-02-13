@@ -15,7 +15,6 @@
 #include <components/compiler/streamerrorhandler.hpp>
 #include <components/compiler/scanner.hpp>
 #include <components/compiler/locals.hpp>
-#include <components/compiler/output.hpp>
 #include <components/compiler/scriptparser.hpp>
 
 #include "filter.hpp"
@@ -29,8 +28,7 @@ void test(const MWWorld::Ptr& actor, int &compiled, int &total, const Compiler::
 
     MWScript::CompilerContext compilerContext(MWScript::CompilerContext::Type_Dialogue);
     compilerContext.setExtensions(extensions);
-    std::ostream errorStream(std::cout.rdbuf());
-    Compiler::StreamErrorHandler errorHandler(errorStream);
+    Compiler::StreamErrorHandler errorHandler;
     errorHandler.setWarningsMode (warningsMode);
 
     const MWWorld::Store<ESM::Dialogue>& dialogues = MWBase::Environment::get().getWorld()->getStore().get<ESM::Dialogue>();
@@ -85,8 +83,7 @@ void test(const MWWorld::Ptr& actor, int &compiled, int &total, const Compiler::
 
                 if (!success)
                 {
-                    Log(Debug::Warning)
-                        << "compiling failed (dialogue script)\n" << info->mResultScript << "\n\n";
+                    Log(Debug::Error) << "Error: compiling failed (dialogue script): \n" << info->mResultScript << "\n";
                 }
             }
         }

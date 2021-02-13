@@ -17,14 +17,14 @@
 #include <components/misc/constants.hpp>
 #include <components/settings/settings.hpp>
 #include <components/sceneutil/visitor.hpp>
+#include <components/sceneutil/shadow.hpp>
+#include <components/sceneutil/vismask.hpp>
 #include <components/files/memorystream.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
 #include "../mwworld/cellstore.hpp"
-
-#include "vismask.hpp"
 
 namespace
 {
@@ -41,7 +41,7 @@ namespace
         virtual void operator()(osg::Node* node, osg::NodeVisitor*)
         {
             if (mRendered)
-                node->setNodeMask(0);
+                node->setNodeMask(SceneUtil::Mask_Disabled);
 
             if (!mRendered)
             {
@@ -91,10 +91,10 @@ LocalMap::LocalMap(osg::Group* root)
 
 LocalMap::~LocalMap()
 {
-    for (CameraVector::iterator it = mActiveCameras.begin(); it != mActiveCameras.end(); ++it)
-        removeCamera(*it);
-    for (CameraVector::iterator it = mCamerasPendingRemoval.begin(); it != mCamerasPendingRemoval.end(); ++it)
-        removeCamera(*it);
+    for (auto& camera : mActiveCameras)
+        removeCamera(camera);
+    for (auto& camera : mCamerasPendingRemoval)
+        removeCamera(camera);
 }
 
 const osg::Vec2f LocalMap::rotatePoint(const osg::Vec2f& point, const osg::Vec2f& center, const float angle)
@@ -177,8 +177,8 @@ osg::ref_ptr<osg::Camera> LocalMap::createOrthographicCamera(float x, float y, f
     camera->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     camera->setRenderOrder(osg::Camera::PRE_RENDER);
 
-    camera->setCullMask(Mask_Scene|Mask_SimpleWater|Mask_Terrain);
-    camera->setNodeMask(Mask_RenderToTexture);
+    camera->setCullMask(SceneUtil::Mask_Scene | SceneUtil::Mask_SimpleWater | SceneUtil::Mask_Terrain | SceneUtil::Mask_Object | SceneUtil::Mask_Static);
+    camera->setNodeMask(SceneUtil::Mask_RenderToTexture);
 
     osg::ref_ptr<osg::StateSet> stateset = new osg::StateSet;
     stateset->setAttribute(new osg::PolygonMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::FILL), osg::StateAttribute::OVERRIDE);
@@ -208,6 +208,8 @@ osg::ref_ptr<osg::Camera> LocalMap::createOrthographicCamera(float x, float y, f
     lightSource->setLight(light);
 
     lightSource->setStateSetModes(*stateset, osg::StateAttribute::ON|osg::StateAttribute::OVERRIDE);
+
+    SceneUtil::ShadowManager::disableShadowsForStateSet(stateset);
 
     camera->addChild(lightSource);
     camera->setStateSet(stateset);
@@ -253,38 +255,30 @@ bool needUpdate(std::set<std::pair<int, int> >& renderedGrid, std::set<std::pair
     return false;
 }
 
-void LocalMap::requestMap(std::set<const MWWorld::CellStore*> cells)
+void LocalMap::requestMap(const MWWorld::CellStore* cell)
 {
-    std::set<std::pair<int, int> > grid;
-    for (std::set<const MWWorld::CellStore*>::iterator it = cells.begin(); it != cells.end(); ++it)
+    if (cell->isExterior())
     {
-        const MWWorld::CellStore* cell = *it;
-        if (cell->isExterior())
-            grid.insert(std::make_pair(cell->getCell()->getGridX(), cell->getCell()->getGridY()));
-    }
+        int cellX = cell->getCell()->getGridX();
+        int cellY = cell->getCell()->getGridY();
 
-    for (std::set<const MWWorld::CellStore*>::iterator it = cells.begin(); it != cells.end(); ++it)
-    {
-        const MWWorld::CellStore* cell = *it;
-        if (cell->isExterior())
-        {
-            int cellX = cell->getCell()->getGridX();
-            int cellY = cell->getCell()->getGridY();
-
-            MapSegment& segment = mSegments[std::make_pair(cellX, cellY)];
-            if (!needUpdate(segment.mGrid, grid, cellX, cellY))
-            {
-                continue;
-            }
-            else
-            {
-                segment.mGrid = grid;
-                requestExteriorMap(cell);
-            }
-        }
+        MapSegment& segment = mSegments[std::make_pair(cellX, cellY)];
+        if (!needUpdate(segment.mGrid, mCurrentGrid, cellX, cellY))
+            return;
         else
-            requestInteriorMap(cell);
+        {
+            segment.mGrid = mCurrentGrid;
+            requestExteriorMap(cell);
+        }
     }
+    else
+        requestInteriorMap(cell);
+}
+
+void LocalMap::addCell(MWWorld::CellStore *cell)
+{
+    if (cell->isExterior())
+        mCurrentGrid.emplace(cell->getCell()->getGridX(), cell->getCell()->getGridY());
 }
 
 void LocalMap::removeCell(MWWorld::CellStore *cell)
@@ -292,7 +286,11 @@ void LocalMap::removeCell(MWWorld::CellStore *cell)
     saveFogOfWar(cell);
 
     if (cell->isExterior())
-        mSegments.erase(std::make_pair(cell->getCell()->getGridX(), cell->getCell()->getGridY()));
+    {
+        std::pair<int, int> coords = std::make_pair(cell->getCell()->getGridX(), cell->getCell()->getGridY());
+        mSegments.erase(coords);
+        mCurrentGrid.erase(coords);
+    }
     else
         mSegments.clear();
 }
@@ -338,8 +336,8 @@ void LocalMap::cleanupCameras()
     if (mCamerasPendingRemoval.empty())
         return;
 
-    for (CameraVector::iterator it = mCamerasPendingRemoval.begin(); it != mCamerasPendingRemoval.end(); ++it)
-        removeCamera(*it);
+    for (auto& camera : mCamerasPendingRemoval)
+        removeCamera(camera);
 
     mCamerasPendingRemoval.clear();
 }
@@ -377,7 +375,7 @@ void LocalMap::requestExteriorMap(const MWWorld::CellStore* cell)
 void LocalMap::requestInteriorMap(const MWWorld::CellStore* cell)
 {
     osg::ComputeBoundsVisitor computeBoundsVisitor;
-    computeBoundsVisitor.setTraversalMask(Mask_Scene|Mask_Terrain);
+    computeBoundsVisitor.setTraversalMask(SceneUtil::Mask_Scene | SceneUtil::Mask_Terrain | SceneUtil::Mask_Object | SceneUtil::Mask_Static);
     mSceneRoot->accept(computeBoundsVisitor);
 
     osg::BoundingBox bounds = computeBoundsVisitor.getBoundingBox();
@@ -612,7 +610,8 @@ void LocalMap::updatePlayer (const osg::Vec3f& position, const osg::Quat& orient
             if (!segment.mFogOfWarImage || !segment.mMapTexture)
                 continue;
 
-            unsigned char* data = segment.mFogOfWarImage->data();
+            uint32_t* data = (uint32_t*)segment.mFogOfWarImage->data();
+            bool changed = false;
             for (int texV = 0; texV<sFogOfWarResolution; ++texV)
             {
                 for (int texU = 0; texU<sFogOfWarResolution; ++texU)
@@ -624,14 +623,22 @@ void LocalMap::updatePlayer (const osg::Vec3f& position, const osg::Quat& orient
                     uint8_t alpha = (clr >> 24);
 
                     alpha = std::min( alpha, (uint8_t) (std::max(0.f, std::min(1.f, (sqrDist/sqrExploreRadius)))*255) );
-                    *(uint32_t*)data = (uint32_t) (alpha << 24);
+                    uint32_t val = (uint32_t) (alpha << 24);
+                    if ( *data != val)
+                    {
+                        *data = val;
+                        changed = true;
+                    }
 
-                    data += 4;
+                    ++data;
                 }
             }
 
-            segment.mHasFogState = true;
-            segment.mFogOfWarImage->dirty();
+            if (changed)
+            {
+                segment.mHasFogState = true;
+                segment.mFogOfWarImage->dirty();
+            }
         }
     }
 }

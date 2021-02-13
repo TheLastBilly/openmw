@@ -14,7 +14,6 @@
 #include <components/interpreter/opcodes.hpp>
 
 #include "../mwbase/environment.hpp"
-#include "../mwbase/dialoguemanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
@@ -26,8 +25,8 @@
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/npcstats.hpp"
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/spellcasting.hpp"
 
-#include "interpretercontext.hpp"
 #include "ref.hpp"
 
 namespace
@@ -292,8 +291,15 @@ namespace MWScript
                     MWMechanics::DynamicStat<float> stat (ptr.getClass().getCreatureStats (ptr)
                         .getDynamic (mIndex));
 
-                    // for fatigue, a negative current value is allowed and means the actor will be knocked down
-                    bool allowDecreaseBelowZero = (mIndex == 2);
+                    bool allowDecreaseBelowZero = false;
+                    if (mIndex == 2) // Fatigue-specific logic
+                    {
+                        // For fatigue, a negative current value is allowed and means the actor will be knocked down
+                        allowDecreaseBelowZero = true;
+                        // Knock down the actor immediately if a non-positive new value is the case
+                        if (diff + current <= 0.f)
+                            ptr.getClass().getCreatureStats(ptr).setKnockedDown(true);
+                    }
                     stat.setCurrent (diff + current, allowDecreaseBelowZero);
 
                     ptr.getClass().getCreatureStats (ptr).setDynamic (mIndex, stat);
@@ -457,10 +463,16 @@ namespace MWScript
                     std::string id = runtime.getStringLiteral (runtime[0].mInteger);
                     runtime.pop();
 
-                    // make sure a spell with this ID actually exists.
-                    MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().find (id);
+                    const ESM::Spell* spell = MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().find (id);
 
-                    ptr.getClass().getCreatureStats (ptr).getSpells().add (id);
+                    MWMechanics::CreatureStats& creatureStats = ptr.getClass().getCreatureStats(ptr);
+                    creatureStats.getSpells().add(id);
+                    ESM::Spell::SpellType type = static_cast<ESM::Spell::SpellType>(spell->mData.mType);
+                    if (type != ESM::Spell::ST_Spell && type != ESM::Spell::ST_Power)
+                    {
+                        // Apply looping particles immediately for constant effects
+                        MWBase::Environment::get().getWorld()->applyLoopingParticles(ptr);
+                    }
                 }
         };
 
@@ -476,7 +488,18 @@ namespace MWScript
                     std::string id = runtime.getStringLiteral (runtime[0].mInteger);
                     runtime.pop();
 
-                    ptr.getClass().getCreatureStats (ptr).getSpells().remove (id);
+                    MWMechanics::CreatureStats& creatureStats = ptr.getClass().getCreatureStats(ptr);
+                    // The spell may have an instant effect which must be handled before the spell's removal.
+                    for (const auto& effect : creatureStats.getSpells().getMagicEffects())
+                    {
+                        if (effect.second.getMagnitude() <= 0)
+                            continue;
+                        MWMechanics::CastSpell cast(ptr, ptr);
+                        if (cast.applyInstantEffect(ptr, ptr, effect.first, effect.second.getMagnitude()))
+                            creatureStats.getSpells().purgeEffect(effect.first.mId);
+                    }
+
+                    creatureStats.getSpells().remove (id);
 
                     MWBase::WindowManager *wm = MWBase::Environment::get().getWindowManager();
 
@@ -536,7 +559,7 @@ namespace MWScript
 
                     Interpreter::Type_Integer value = 0;
 
-                    if (ptr.getClass().getCreatureStats(ptr).getSpells().hasSpell(id))
+                    if (ptr.getClass().isActor() && ptr.getClass().getCreatureStats(ptr).getSpells().hasSpell(id))
                         value = 1;
 
                     runtime.push (value);
@@ -1015,7 +1038,19 @@ namespace MWScript
                     if (ptr == player)
                         return;
 
-                    ptr.getClass().getNpcStats(ptr).raiseRank(factionID);
+                    // If we already changed rank for this NPC, modify current rank in the NPC stats.
+                    // Otherwise take rank from base NPC record, increase it and put it to NPC data.
+                    int currentRank = ptr.getClass().getNpcStats(ptr).getFactionRank(factionID);
+                    if (currentRank >= 0)
+                        ptr.getClass().getNpcStats(ptr).raiseRank(factionID);
+                    else
+                    {
+                        int rank = ptr.getClass().getPrimaryFactionRank(ptr);
+                        rank++;
+                        ptr.getClass().getNpcStats(ptr).joinFaction(factionID);
+                        for (int i=0; i<rank; i++)
+                            ptr.getClass().getNpcStats(ptr).raiseRank(factionID);
+                    }
                 }
         };
 
@@ -1038,7 +1073,21 @@ namespace MWScript
                     if (ptr == player)
                         return;
 
-                    ptr.getClass().getNpcStats(ptr).lowerRank(factionID);
+                    // If we already changed rank for this NPC, modify current rank in the NPC stats.
+                    // Otherwise take rank from base NPC record, decrease it and put it to NPC data.
+                    int currentRank = ptr.getClass().getNpcStats(ptr).getFactionRank(factionID);
+                    if (currentRank == 0)
+                        return;
+                    else if (currentRank > 0)
+                        ptr.getClass().getNpcStats(ptr).lowerRank(factionID);
+                    else
+                    {
+                        int rank = ptr.getClass().getPrimaryFactionRank(ptr);
+                        rank--;
+                        ptr.getClass().getNpcStats(ptr).joinFaction(factionID);
+                        for (int i=0; i<rank; i++)
+                            ptr.getClass().getNpcStats(ptr).raiseRank(factionID);
+                    }
                 }
         };
 
@@ -1143,7 +1192,7 @@ namespace MWScript
 
                     if (ptr == MWMechanics::getPlayer())
                     {
-                        ptr.getClass().getCreatureStats(ptr).resurrect();
+                        MWBase::Environment::get().getMechanicsManager()->resurrect(ptr);
                         if (MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_Ended)
                             MWBase::Environment::get().getStateManager()->resumeGame();
                     }

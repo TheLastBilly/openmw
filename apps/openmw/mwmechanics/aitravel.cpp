@@ -1,16 +1,13 @@
 #include "aitravel.hpp"
 
 #include <components/esm/aisequence.hpp>
-#include <components/esm/loadcell.hpp>
 
 #include "../mwbase/environment.hpp"
-#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/world.hpp"
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/cellstore.hpp"
 
-#include "steering.hpp"
 #include "movement.hpp"
 #include "creaturestats.hpp"
 
@@ -22,8 +19,7 @@ bool isWithinMaxRange(const osg::Vec3f& pos1, const osg::Vec3f& pos2)
     // Maximum travel distance for vanilla compatibility.
     // Was likely meant to prevent NPCs walking into non-loaded exterior cells, but for some reason is used in interior cells as well.
     // We can make this configurable at some point, but the default *must* be the below value. Anything else will break shoddily-written content (*cough* MW *cough*) in bizarre ways.
-    float aiDistance = MWBase::Environment::get().getMechanicsManager()->getActorsProcessingRange();
-    return (pos1 - pos2).length2() <= aiDistance*aiDistance;
+    return (pos1 - pos2).length2() <= 7168*7168;
 }
 
 }
@@ -47,19 +43,25 @@ namespace MWMechanics
 
     bool AiTravel::execute (const MWWorld::Ptr& actor, CharacterController& characterController, AiState& state, float duration)
     {
-        ESM::Position pos = actor.getRefData().getPosition();
+        auto& stats = actor.getClass().getCreatureStats(actor);
 
-        actor.getClass().getCreatureStats(actor).setMovementFlag(CreatureStats::Flag_Run, false);
-        actor.getClass().getCreatureStats(actor).setDrawState(DrawState_Nothing);
-
-        if (!isWithinMaxRange(osg::Vec3f(mX, mY, mZ), pos.asVec3()))
+        if (stats.isTurningToPlayer() || stats.getGreetingState() == Greet_InProgress)
             return false;
+
+        const osg::Vec3f actorPos(actor.getRefData().getPosition().asVec3());
+        const osg::Vec3f targetPos(mX, mY, mZ);
+
+        stats.setMovementFlag(CreatureStats::Flag_Run, false);
+        stats.setDrawState(DrawState_Nothing);
+
+        // Note: we should cancel internal "return after combat" package, if original location is too far away
+        if (!isWithinMaxRange(targetPos, actorPos))
+            return mHidden;
 
         // Unfortunately, with vanilla assets destination is sometimes blocked by other actor.
         // If we got close to target, check for actors nearby. If they are, finish AI package.
         int destinationTolerance = 64;
-        ESM::Pathgrid::Point dest(static_cast<int>(mX), static_cast<int>(mY), static_cast<int>(mZ));
-        if (distance(pos.pos, dest) <= destinationTolerance)
+        if (distance(actorPos, targetPos) <= destinationTolerance)
         {
             std::vector<MWWorld::Ptr> targetActors;
             std::pair<MWWorld::Ptr, osg::Vec3f> result = MWBase::Environment::get().getWorld()->getHitContact(actor, destinationTolerance, targetActors);
@@ -71,7 +73,7 @@ namespace MWMechanics
             }
         }
 
-        if (pathTo(actor, dest, duration))
+        if (pathTo(actor, targetPos, duration))
         {
             actor.getClass().getMovementSettings(actor).mPosition[1] = 0;
             return true;
@@ -92,6 +94,7 @@ namespace MWMechanics
         // that is the user's responsibility
         MWBase::Environment::get().getWorld()->moveObject(actor, mX, mY, mZ);
         actor.getClass().adjustPosition(actor, false);
+        reset();
     }
 
     void AiTravel::writeState(ESM::AiSequence::AiSequence &sequence) const

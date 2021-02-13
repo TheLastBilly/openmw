@@ -1,6 +1,12 @@
 #include "pathfinding.hpp"
 
+#include <iterator>
 #include <limits>
+
+#include <components/detournavigator/exceptions.hpp>
+#include <components/detournavigator/debug.hpp>
+#include <components/detournavigator/navigator.hpp>
+#include <components/debug/debuglog.hpp>
 
 #include "../mwbase/world.hpp"
 #include "../mwbase/environment.hpp"
@@ -8,9 +14,11 @@
 #include "../mwphysics/collisiontype.hpp"
 
 #include "../mwworld/cellstore.hpp"
+#include "../mwworld/class.hpp"
 
 #include "pathgrid.hpp"
 #include "coordinateconverter.hpp"
+#include "actorutil.hpp"
 
 namespace
 {
@@ -29,7 +37,7 @@ namespace
         //       points to a quadtree may help
         for(unsigned int counter = 0; counter < grid->mPoints.size(); counter++)
         {
-            float potentialDistBetween = MWMechanics::PathFinder::DistanceSquared(grid->mPoints[counter], pos);
+            float potentialDistBetween = MWMechanics::PathFinder::distanceSquared(grid->mPoints[counter], pos);
             if (potentialDistBetween < closestDistanceReachable)
             {
                 // found a closer one
@@ -57,54 +65,38 @@ namespace
             (closestReachableIndex, closestReachableIndex == closestIndex);
     }
 
+    float sqrDistance(const osg::Vec2f& lhs, const osg::Vec2f& rhs)
+    {
+        return (lhs - rhs).length2();
+    }
+
+    float sqrDistanceIgnoreZ(const osg::Vec3f& lhs, const osg::Vec3f& rhs)
+    {
+        return sqrDistance(osg::Vec2f(lhs.x(), lhs.y()), osg::Vec2f(rhs.x(), rhs.y()));
+    }
+
+    float getPathStepSize(const MWWorld::ConstPtr& actor)
+    {
+        const auto world = MWBase::Environment::get().getWorld();
+        const auto realHalfExtents = world->getHalfExtents(actor);
+        return 2 * std::max(realHalfExtents.x(), realHalfExtents.y());
+    }
+
+    float getHeight(const MWWorld::ConstPtr& actor)
+    {
+        const auto world = MWBase::Environment::get().getWorld();
+        const auto halfExtents = world->getHalfExtents(actor);
+        return 2.0 * halfExtents.z();
+    }
 }
 
 namespace MWMechanics
 {
-    float sqrDistanceIgnoreZ(const ESM::Pathgrid::Point& point, float x, float y)
+    float getPathDistance(const MWWorld::Ptr& actor, const osg::Vec3f& lhs, const osg::Vec3f& rhs)
     {
-        x -= point.mX;
-        y -= point.mY;
-        return (x * x + y * y);
-    }
-
-    float distance(const ESM::Pathgrid::Point& point, float x, float y, float z)
-    {
-        x -= point.mX;
-        y -= point.mY;
-        z -= point.mZ;
-        return sqrt(x * x + y * y + z * z);
-    }
-
-    float distance(const ESM::Pathgrid::Point& a, const ESM::Pathgrid::Point& b)
-    {
-        float x = static_cast<float>(a.mX - b.mX);
-        float y = static_cast<float>(a.mY - b.mY);
-        float z = static_cast<float>(a.mZ - b.mZ);
-        return sqrt(x * x + y * y + z * z);
-    }
-
-    float getZAngleToDir(const osg::Vec3f& dir)
-    {
-        return std::atan2(dir.x(), dir.y());
-    }
-
-    float getXAngleToDir(const osg::Vec3f& dir)
-    {
-        float dirLen = dir.length();
-        return (dirLen != 0) ? -std::asin(dir.z() / dirLen) : 0;
-    }
-
-    float getZAngleToPoint(const ESM::Pathgrid::Point &origin, const ESM::Pathgrid::Point &dest)
-    {
-        osg::Vec3f dir = PathFinder::MakeOsgVec3(dest) - PathFinder::MakeOsgVec3(origin);
-        return getZAngleToDir(dir);
-    }
-
-    float getXAngleToPoint(const ESM::Pathgrid::Point &origin, const ESM::Pathgrid::Point &dest)
-    {
-        osg::Vec3f dir = PathFinder::MakeOsgVec3(dest) - PathFinder::MakeOsgVec3(origin);
-        return getXAngleToDir(dir);
+        if (std::abs(lhs.z() - rhs.z()) > getHeight(actor) || canActorMoveByZAxis(actor))
+            return distance(lhs, rhs);
+        return distanceIgnoreZ(lhs, rhs);
     }
 
     bool checkWayIsClear(const osg::Vec3f& from, const osg::Vec3f& to, float offsetXY)
@@ -119,18 +111,6 @@ namespace MWMechanics
         float h = _from.z() - MWBase::Environment::get().getWorld()->getDistToNearestRayHit(_from, -osg::Z_AXIS, verticalOffset + PATHFIND_Z_REACH + 1);
 
         return (std::abs(from.z() - h) <= PATHFIND_Z_REACH);
-    }
-
-    PathFinder::PathFinder()
-        : mPathgrid(nullptr)
-        , mCell(nullptr)
-    {
-    }
-
-    void PathFinder::clearPath()
-    {
-        if(!mPath.empty())
-            mPath.clear();
     }
 
     /*
@@ -150,7 +130,7 @@ namespace MWMechanics
      * pathgrid point (e.g. wander) then it may be worth while to call
      * pop_back() to remove the redundant entry.
      *
-     * NOTE: coordinates must be converted prior to calling GetClosestPoint()
+     * NOTE: coordinates must be converted prior to calling getClosestPoint()
      *
      *    |
      *    |       cell
@@ -169,52 +149,44 @@ namespace MWMechanics
      *    j = @.x in local coordinates (i.e. within the cell)
      *    k = @.x in world coordinates
      */
-    void PathFinder::buildPath(const ESM::Pathgrid::Point &startPoint,
-                               const ESM::Pathgrid::Point &endPoint,
-                               const MWWorld::CellStore* cell, const PathgridGraph& pathgridGraph)
+    void PathFinder::buildPathByPathgridImpl(const osg::Vec3f& startPoint, const osg::Vec3f& endPoint,
+        const PathgridGraph& pathgridGraph, std::back_insert_iterator<std::deque<osg::Vec3f>> out)
     {
-        mPath.clear();
-
-        // TODO: consider removing mCell / mPathgrid in favor of mPathgridGraph
-        if(mCell != cell || !mPathgrid)
-        {
-            mCell = cell;
-            mPathgrid = pathgridGraph.getPathgrid();
-        }
+        const auto pathgrid = pathgridGraph.getPathgrid();
 
         // Refer to AiWander reseach topic on openmw forums for some background.
         // Maybe there is no pathgrid for this cell.  Just go to destination and let
         // physics take care of any blockages.
-        if(!mPathgrid || mPathgrid->mPoints.empty())
+        if(!pathgrid || pathgrid->mPoints.empty())
         {
-            mPath.push_back(endPoint);
+            *out++ = endPoint;
             return;
         }
 
-        // NOTE: GetClosestPoint expects local coordinates
+        // NOTE: getClosestPoint expects local coordinates
         CoordinateConverter converter(mCell->getCell());
 
-        // NOTE: It is possible that GetClosestPoint returns a pathgrind point index
+        // NOTE: It is possible that getClosestPoint returns a pathgrind point index
         //       that is unreachable in some situations. e.g. actor is standing
         //       outside an area enclosed by walls, but there is a pathgrid
         //       point right behind the wall that is closer than any pathgrid
         //       point outside the wall
         osg::Vec3f startPointInLocalCoords(converter.toLocalVec3(startPoint));
-        int startNode = GetClosestPoint(mPathgrid, startPointInLocalCoords);
+        int startNode = getClosestPoint(pathgrid, startPointInLocalCoords);
 
         osg::Vec3f endPointInLocalCoords(converter.toLocalVec3(endPoint));
-        std::pair<int, bool> endNode = getClosestReachablePoint(mPathgrid, &pathgridGraph,
+        std::pair<int, bool> endNode = getClosestReachablePoint(pathgrid, &pathgridGraph,
             endPointInLocalCoords,
                 startNode);
 
         // if it's shorter for actor to travel from start to end, than to travel from either
         // start or end to nearest pathgrid point, just travel from start to end.
         float startToEndLength2 = (endPointInLocalCoords - startPointInLocalCoords).length2();
-        float endTolastNodeLength2 = DistanceSquared(mPathgrid->mPoints[endNode.first], endPointInLocalCoords);
-        float startTo1stNodeLength2 = DistanceSquared(mPathgrid->mPoints[startNode], startPointInLocalCoords);
+        float endTolastNodeLength2 = distanceSquared(pathgrid->mPoints[endNode.first], endPointInLocalCoords);
+        float startTo1stNodeLength2 = distanceSquared(pathgrid->mPoints[startNode], startPointInLocalCoords);
         if ((startToEndLength2 < startTo1stNodeLength2) || (startToEndLength2 < endTolastNodeLength2))
         {
-            mPath.push_back(endPoint);
+            *out++ = endPoint;
             return;
         }
 
@@ -225,21 +197,21 @@ namespace MWMechanics
         //       nodes are the same
         if(startNode == endNode.first)
         {
-            ESM::Pathgrid::Point temp(mPathgrid->mPoints[startNode]);
+            ESM::Pathgrid::Point temp(pathgrid->mPoints[startNode]);
             converter.toWorld(temp);
-            mPath.push_back(temp);
+            *out++ = makeOsgVec3(temp);
         }
         else
         {
-            mPath = pathgridGraph.aStarSearch(startNode, endNode.first);
+            auto path = pathgridGraph.aStarSearch(startNode, endNode.first);
 
             // If nearest path node is in opposite direction from second, remove it from path.
             // Especially useful for wandering actors, if the nearest node is blocked for some reason.
-            if (mPath.size() > 1)
+            if (path.size() > 1)
             {
-                ESM::Pathgrid::Point secondNode = *(++mPath.begin());
-                osg::Vec3f firstNodeVec3f = MakeOsgVec3(mPathgrid->mPoints[startNode]);
-                osg::Vec3f secondNodeVec3f = MakeOsgVec3(secondNode);
+                ESM::Pathgrid::Point secondNode = *(++path.begin());
+                osg::Vec3f firstNodeVec3f = makeOsgVec3(pathgrid->mPoints[startNode]);
+                osg::Vec3f secondNodeVec3f = makeOsgVec3(secondNode);
                 osg::Vec3f toSecondNodeVec3f = secondNodeVec3f - firstNodeVec3f;
                 osg::Vec3f toStartPointVec3f = startPointInLocalCoords - firstNodeVec3f;
                 if (toSecondNodeVec3f * toStartPointVec3f > 0)
@@ -248,23 +220,25 @@ namespace MWMechanics
                     converter.toWorld(temp);
                     // Add Z offset since path node can overlap with other objects.
                     // Also ignore doors in raytesting.
-                    int mask = MWPhysics::CollisionType_World;
+                    const int mask = MWPhysics::CollisionType_World;
                     bool isPathClear = !MWBase::Environment::get().getWorld()->castRay(
-                        startPoint.mX, startPoint.mY, startPoint.mZ+16, temp.mX, temp.mY, temp.mZ+16, mask);
+                        startPoint.x(), startPoint.y(), startPoint.z() + 16, temp.mX, temp.mY, temp.mZ + 16, mask);
                     if (isPathClear)
-                        mPath.pop_front();
+                        path.pop_front();
                 }
             }
 
             // convert supplied path to world coordinates
-            for (std::list<ESM::Pathgrid::Point>::iterator iter(mPath.begin()); iter != mPath.end(); ++iter)
-            {
-                converter.toWorld(*iter);
-            }
+            std::transform(path.begin(), path.end(), out,
+                [&] (ESM::Pathgrid::Point& point)
+                {
+                    converter.toWorld(point);
+                    return makeOsgVec3(point);
+                });
         }
 
         // If endNode found is NOT the closest PathGrid point to the endPoint,
-        // assume endPoint is not reachable from endNode. In which case, 
+        // assume endPoint is not reachable from endNode. In which case,
         // path ends at endNode.
         //
         // So only add the destination (which may be different to the closest
@@ -276,7 +250,7 @@ namespace MWMechanics
         //
         // The AI routines will have to deal with such situations.
         if(endNode.second)
-            mPath.push_back(endPoint);
+            *out++ = endPoint;
     }
 
     float PathFinder::getZAngleToNext(float x, float y) const
@@ -286,9 +260,9 @@ namespace MWMechanics
         if(mPath.empty())
             return 0.;
 
-        const ESM::Pathgrid::Point &nextPoint = *mPath.begin();
-        float directionX = nextPoint.mX - x;
-        float directionY = nextPoint.mY - y;
+        const auto& nextPoint = mPath.front();
+        const float directionX = nextPoint.x() - x;
+        const float directionY = nextPoint.y() - y;
 
         return std::atan2(directionX, directionY);
     }
@@ -300,62 +274,128 @@ namespace MWMechanics
         if(mPath.empty())
             return 0.;
 
-        const ESM::Pathgrid::Point &nextPoint = *mPath.begin();
-        osg::Vec3f dir = MakeOsgVec3(nextPoint) - osg::Vec3f(x,y,z);
+        const osg::Vec3f dir = mPath.front() - osg::Vec3f(x, y, z);
 
         return getXAngleToDir(dir);
     }
 
-    bool PathFinder::checkPathCompleted(float x, float y, float tolerance)
+    void PathFinder::update(const osg::Vec3f& position, const float pointTolerance, const float destinationTolerance)
     {
-        if(mPath.empty())
-            return true;
+        if (mPath.empty())
+            return;
 
-        const ESM::Pathgrid::Point& nextPoint = *mPath.begin();
-        if (sqrDistanceIgnoreZ(nextPoint, x, y) < tolerance*tolerance)
-        {
+        while (mPath.size() > 1 && sqrDistanceIgnoreZ(mPath.front(), position) < pointTolerance * pointTolerance)
             mPath.pop_front();
-            if(mPath.empty())
-            {
-                return true;
-            }
-        }
 
-        return false;
+        if (mPath.size() == 1 && sqrDistanceIgnoreZ(mPath.front(), position) < destinationTolerance * destinationTolerance)
+            mPath.pop_front();
     }
 
-    // see header for the rationale
-    void PathFinder::buildSyncedPath(const ESM::Pathgrid::Point &startPoint,
-        const ESM::Pathgrid::Point &endPoint,
-        const MWWorld::CellStore* cell, const MWMechanics::PathgridGraph& pathgridGraph)
+    void PathFinder::buildStraightPath(const osg::Vec3f& endPoint)
     {
-        if (mPath.size() < 2)
-        {
-            // if path has one point, then it's the destination.
-            // don't need to worry about bad path for this case
-            buildPath(startPoint, endPoint, cell, pathgridGraph);
-        }
-        else
-        {
-            const ESM::Pathgrid::Point oldStart(*getPath().begin());
-            buildPath(startPoint, endPoint, cell, pathgridGraph);
-            if (mPath.size() >= 2)
-            {
-                // if 2nd waypoint of new path == 1st waypoint of old,
-                // delete 1st waypoint of new path.
-                std::list<ESM::Pathgrid::Point>::iterator iter = ++mPath.begin();
-                if (iter->mX == oldStart.mX
-                    && iter->mY == oldStart.mY
-                    && iter->mZ == oldStart.mZ)
-                {
-                    mPath.pop_front();
-                }
-            }
-        }
+        mPath.clear();
+        mPath.push_back(endPoint);
+        mConstructed = true;
     }
 
-    const MWWorld::CellStore* PathFinder::getPathCell() const
+    void PathFinder::buildPathByPathgrid(const osg::Vec3f& startPoint, const osg::Vec3f& endPoint,
+        const MWWorld::CellStore* cell, const PathgridGraph& pathgridGraph)
     {
-        return mCell;
+        mPath.clear();
+        mCell = cell;
+
+        buildPathByPathgridImpl(startPoint, endPoint, pathgridGraph, std::back_inserter(mPath));
+
+        mConstructed = true;
+    }
+
+    void PathFinder::buildPathByNavMesh(const MWWorld::ConstPtr& actor, const osg::Vec3f& startPoint,
+        const osg::Vec3f& endPoint, const osg::Vec3f& halfExtents, const DetourNavigator::Flags flags)
+    {
+        mPath.clear();
+
+        // If it's not possible to build path over navmesh due to disabled navmesh generation fallback to straight path
+        if (!buildPathByNavigatorImpl(actor, startPoint, endPoint, halfExtents, flags, std::back_inserter(mPath)))
+            mPath.push_back(endPoint);
+
+        mConstructed = true;
+    }
+
+    void PathFinder::buildPath(const MWWorld::ConstPtr& actor, const osg::Vec3f& startPoint, const osg::Vec3f& endPoint,
+        const MWWorld::CellStore* cell, const PathgridGraph& pathgridGraph, const osg::Vec3f& halfExtents,
+        const DetourNavigator::Flags flags)
+    {
+        mPath.clear();
+        mCell = cell;
+
+        if (!actor.getClass().isPureWaterCreature(actor) && !actor.getClass().isPureFlyingCreature(actor))
+            buildPathByNavigatorImpl(actor, startPoint, endPoint, halfExtents, flags, std::back_inserter(mPath));
+
+        if (mPath.empty())
+            buildPathByPathgridImpl(startPoint, endPoint, pathgridGraph, std::back_inserter(mPath));
+
+        mConstructed = true;
+    }
+
+    bool PathFinder::buildPathByNavigatorImpl(const MWWorld::ConstPtr& actor, const osg::Vec3f& startPoint,
+        const osg::Vec3f& endPoint, const osg::Vec3f& halfExtents, const DetourNavigator::Flags flags,
+        std::back_insert_iterator<std::deque<osg::Vec3f>> out)
+    {
+        const auto world = MWBase::Environment::get().getWorld();
+        const auto stepSize = getPathStepSize(actor);
+        const auto navigator = world->getNavigator();
+        const auto status = navigator->findPath(halfExtents, stepSize, startPoint, endPoint, flags, out);
+
+        if (status == DetourNavigator::Status::NavMeshNotFound)
+            return false;
+
+        if (status != DetourNavigator::Status::Success)
+        {
+            Log(Debug::Debug) << "Build path by navigator error: \"" << DetourNavigator::getMessage(status)
+                << "\" for \"" << actor.getClass().getName(actor) << "\" (" << actor.getBase()
+                << ") from " << startPoint << " to " << endPoint << " with flags ("
+                << DetourNavigator::WriteFlags {flags} << ")";
+        }
+
+        return true;
+    }
+
+    void PathFinder::buildPathByNavMeshToNextPoint(const MWWorld::ConstPtr& actor, const osg::Vec3f& halfExtents,
+        const DetourNavigator::Flags flags, const float pointTolerance)
+    {
+        if (mPath.empty())
+            return;
+
+        const auto stepSize = getPathStepSize(actor);
+        const auto startPoint = actor.getRefData().getPosition().asVec3();
+
+        if (sqrDistanceIgnoreZ(mPath.front(), startPoint) <= 4 * stepSize * stepSize)
+            return;
+
+        const auto navigator = MWBase::Environment::get().getWorld()->getNavigator();
+        std::deque<osg::Vec3f> prePath;
+        auto prePathInserter = std::back_inserter(prePath);
+        const auto status = navigator->findPath(halfExtents, stepSize, startPoint, mPath.front(), flags,
+                                                prePathInserter);
+
+        if (status == DetourNavigator::Status::NavMeshNotFound)
+            return;
+
+        if (status != DetourNavigator::Status::Success)
+        {
+            Log(Debug::Debug) << "Build path by navigator error: \"" << DetourNavigator::getMessage(status)
+                << "\" for \"" << actor.getClass().getName(actor) << "\" (" << actor.getBase()
+                << ") from " << startPoint << " to " << mPath.front() << " with flags ("
+                << DetourNavigator::WriteFlags {flags} << ")";
+            return;
+        }
+
+        while (!prePath.empty() && sqrDistanceIgnoreZ(prePath.front(), startPoint) < stepSize * stepSize)
+            prePath.pop_front();
+
+        while (!prePath.empty() && sqrDistanceIgnoreZ(prePath.back(), mPath.front()) < stepSize * stepSize)
+            prePath.pop_back();
+
+        std::copy(prePath.rbegin(), prePath.rend(), std::front_inserter(mPath));
     }
 }

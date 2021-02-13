@@ -54,18 +54,6 @@ based on whether the caps lock key was on or off at the time you exited.
 
 This settings can be toggled in game by pressing the CapsLock key and exiting.
 
-allow third person zoom
------------------------
-
-:Type:		boolean
-:Range:		True/False
-:Default:	False
-
-Allow zooming in and out using the middle mouse wheel in third person view.
-This feature may not work correctly if the mouse wheel is bound to other actions,
-and may be triggered accidentally in some cases, so is disabled by default.
-This setting can only be configured by editing the settings configuration file.
-
 camera sensitivity
 ------------------
 
@@ -94,6 +82,20 @@ meaning that it should remain set at 1.0 unless the player desires to have diffe
 
 This setting can only be configured by editing the settings configuration file.
 
+invert x axis
+-------------
+
+:Type:      boolean
+:Range:     True/False
+:Default:   False
+
+
+Invert the horizontal axis while not in GUI mode.
+If this setting is true, moving the mouse to the left will cause the view to rotate counter-clockwise,
+while moving it to the right will cause the view to rotate clockwise. This setting does not affect cursor movement in GUI mode.
+
+This setting can be toggled in game with the Invert X Axis button in the Controls panel of the Options menu.
+
 invert y axis
 -------------
 
@@ -106,3 +108,106 @@ If this setting is true, moving the mouse away from the player will look down,
 while moving it towards the player will look up. This setting does not affect cursor movement in GUI mode.
 
 This setting can be toggled in game with the Invert Y Axis button in the Controls panel of the Options menu.
+
+enable controller
+-----------------
+
+:Type:		boolean
+:Range:		True/False
+:Default:	True
+
+Enable support of controller input — or rather not ignore controller events,
+which are always sent if a controller is present and detected.
+Disabling this setting can be useful for working around controller-related issues or for setting up split-screen gameplay configurations.
+
+This setting can be toggled in game with the Enable Joystick button in the Controls panel of the Options menu.
+
+gamepad cursor speed
+--------------------
+
+:Type: float
+:Range: >0
+:Default: 1.0
+
+This setting controls the speed of the cursor within GUI mode when using the joystick.
+This setting has no effect on the camera rotation speed, which is controlled by the
+camera sensitivity setting.
+
+This setting can only be configured by editing the settings configuration file.
+
+enable gyroscope
+----------------
+
+:Type:		boolean
+:Range:		True/False
+:Default:	False
+
+Enable the support of camera rotation based on the information supplied from the gyroscope through SDL.
+
+This setting can only be configured by editing the settings configuration file.
+
+gyro horizontal axis
+--------------------
+
+:Type:      string
+:Range:     x, y, z, -x, -y, -z
+:Default:   -x
+
+This setting sets up an axis of the gyroscope as the horizontal camera axis.
+Minus sign swaps the positive and negative direction of the axis.
+Keep in mind that while this setting corresponds to the landscape mode of the display,
+the portrait mode or any other mode will have this axis corrected automatically.
+
+This setting can only be configured by editing the settings configuration file.
+
+gyro vertical axis
+------------------
+
+:Type:      string
+:Range:     x, y, z, -x, -y, -z
+:Default:   y
+
+This setting sets up an axis of the gyroscope as the vertical camera axis.
+Minus sign swaps the positive and negative direction of the axis.
+Keep in mind that while this setting corresponds to the landscape mode of the display,
+the portrait mode or any other mode will have this axis corrected automatically.
+
+This setting can only be configured by editing the settings configuration file.
+
+gyro input threshold
+--------------------
+
+:Type:		floating point
+:Range:		> 0
+:Default:	0.01
+
+This setting determines the minimum value of the rotation that will be accepted.
+It allows to avoid crosshair oscillation due to gyroscope "noise".
+
+This setting can only be configured by editing the settings configuration file.
+
+gyro horizontal sensitivity
+---------------------------
+
+:Type: float
+:Range: >0
+:Default: 1.0
+
+This setting controls the overall gyroscope horizontal sensitivity.
+The smaller this sensitivity is, the less visible effect the device rotation
+will have on the horizontal camera rotation, and vice versa.
+
+This setting can only be configured by editing the settings configuration file.
+
+gyro vertical sensitivity
+-------------------------
+
+:Type: float
+:Range: >0
+:Default: 1.0
+
+This setting controls the overall gyroscope vertical sensitivity.
+The smaller this sensitivity is, the less visible effect the device
+rotation will have on the vertical camera rotation, and vice versa.
+
+This setting can only be configured by editing the settings configuration file.

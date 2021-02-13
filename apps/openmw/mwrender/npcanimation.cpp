@@ -18,10 +18,14 @@
 #include <components/sceneutil/actorutil.hpp>
 #include <components/sceneutil/attach.hpp>
 #include <components/sceneutil/visitor.hpp>
+#include <components/sceneutil/vismask.hpp>
 #include <components/sceneutil/skeleton.hpp>
-#include <components/sceneutil/lightmanager.hpp>
+
+#include <components/settings/settings.hpp>
 
 #include <components/nifosg/nifloader.hpp> // TextKeyMapHolder
+
+#include <components/vfs/manager.hpp>
 
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
@@ -30,6 +34,7 @@
 
 #include "../mwmechanics/npcstats.hpp"
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/weapontype.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -39,7 +44,6 @@
 #include "camera.hpp"
 #include "rotatecontroller.hpp"
 #include "renderbin.hpp"
-#include "vismask.hpp"
 
 namespace
 {
@@ -53,10 +57,8 @@ std::string getVampireHead(const std::string& race, bool female)
     if (sVampireMapping.find(thisCombination) == sVampireMapping.end())
     {
         const MWWorld::ESMStore &store = MWBase::Environment::get().getWorld()->getStore();
-        const MWWorld::Store<ESM::BodyPart> &partStore = store.get<ESM::BodyPart>();
-        for(MWWorld::Store<ESM::BodyPart>::iterator it = partStore.begin(); it != partStore.end(); ++it)
+        for (const ESM::BodyPart& bodypart : store.get<ESM::BodyPart>())
         {
-            const ESM::BodyPart& bodypart = *it;
             if (!bodypart.mData.mVampire)
                 continue;
             if (bodypart.mData.mType != ESM::BodyPart::MT_Skin)
@@ -67,17 +69,44 @@ std::string getVampireHead(const std::string& race, bool female)
                 continue;
             if (!Misc::StringUtils::ciEqual(bodypart.mRace, race))
                 continue;
-            sVampireMapping[thisCombination] = &*it;
+            sVampireMapping[thisCombination] = &bodypart;
         }
     }
 
-    if (sVampireMapping.find(thisCombination) == sVampireMapping.end())
-        sVampireMapping[thisCombination] = nullptr;
+    sVampireMapping.emplace(thisCombination, nullptr);
 
     const ESM::BodyPart* bodyPart = sVampireMapping[thisCombination];
     if (!bodyPart)
         return std::string();
     return "meshes\\" + bodyPart->mModel;
+}
+
+std::string getShieldBodypartMesh(const std::vector<ESM::PartReference>& bodyparts, bool female)
+{
+    const MWWorld::ESMStore &store = MWBase::Environment::get().getWorld()->getStore();
+    const MWWorld::Store<ESM::BodyPart> &partStore = store.get<ESM::BodyPart>();
+    for (const auto& part : bodyparts)
+    {
+        if (part.mPart != ESM::PRT_Shield)
+            continue;
+
+        std::string bodypartName;
+        if (female && !part.mFemale.empty())
+            bodypartName = part.mFemale;
+        else if (!part.mMale.empty())
+            bodypartName = part.mMale;
+
+        if (!bodypartName.empty())
+        {
+            const ESM::BodyPart *bodypart = partStore.search(bodypartName);
+            if (bodypart == nullptr || bodypart->mData.mType != ESM::BodyPart::MT_Armor)
+                return std::string();
+            if (!bodypart->mModel.empty())
+                return "meshes\\" + bodypart->mModel;
+        }
+    }
+
+    return std::string();
 }
 
 }
@@ -185,7 +214,7 @@ void HeadAnimationTime::update(float dt)
     if (!mEnabled)
         return;
 
-    if (MWBase::Environment::get().getSoundManager()->sayDone(mReference))
+    if (!MWBase::Environment::get().getSoundManager()->sayActive(mReference))
     {
         mBlinkTimer += dt;
 
@@ -237,6 +266,21 @@ void HeadAnimationTime::setBlinkStop(float value)
 
 // ----------------------------------------------------
 
+NpcAnimation::NpcType NpcAnimation::getNpcType()
+{
+    const MWWorld::Class &cls = mPtr.getClass();
+    // Dead vampires should typically stay vampires.
+    if (mNpcType == Type_Vampire && cls.getNpcStats(mPtr).isDead() && !cls.getNpcStats(mPtr).isWerewolf())
+        return mNpcType;
+    NpcAnimation::NpcType curType = Type_Normal;
+    if (cls.getCreatureStats(mPtr).getMagicEffects().get(ESM::MagicEffect::Vampirism).getMagnitude() > 0)
+        curType = Type_Vampire;
+    if (cls.getNpcStats(mPtr).isWerewolf())
+        curType = Type_Werewolf;
+
+    return curType;
+}
+
 static NpcAnimation::PartBoneMap createPartListMap()
 {
     NpcAnimation::PartBoneMap result;
@@ -265,7 +309,7 @@ static NpcAnimation::PartBoneMap createPartListMap()
     result.insert(std::make_pair(ESM::PRT_LLeg, "Left Upper Leg"));
     result.insert(std::make_pair(ESM::PRT_RPauldron, "Right Clavicle"));
     result.insert(std::make_pair(ESM::PRT_LPauldron, "Left Clavicle"));
-    result.insert(std::make_pair(ESM::PRT_Weapon, "Weapon Bone"));
+    result.insert(std::make_pair(ESM::PRT_Weapon, "Weapon Bone")); // Fallback. The real node name depends on the current weapon type.
     result.insert(std::make_pair(ESM::PRT_Tail, "Tail"));
     return result;
 }
@@ -282,7 +326,7 @@ NpcAnimation::NpcAnimation(const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> par
     mViewMode(viewMode),
     mShowWeapons(false),
     mShowCarriedLeft(true),
-    mNpcType(Type_Normal),
+    mNpcType(getNpcType()),
     mFirstPersonFieldOfView(firstPersonFieldOfView),
     mSoundsDisabled(disableSounds),
     mAccurateAiming(false),
@@ -309,8 +353,9 @@ void NpcAnimation::setViewMode(NpcAnimation::ViewMode viewMode)
         return;
 
     mViewMode = viewMode;
-    rebuild();
+    MWBase::Environment::get().getWorld()->scaleObject(mPtr, mPtr.getCellRef().getScale()); // apply race height after view change
 
+    rebuild();
     setRenderBin();
 }
 
@@ -353,11 +398,16 @@ public:
         if (cv->getProjectionMatrix()->getPerspective(fov, aspect, zNear, zFar))
         {
             fov = mFov;
-            osg::RefMatrix* newProjectionMatrix = new osg::RefMatrix(*cv->getProjectionMatrix());
+            osg::ref_ptr<osg::RefMatrix> newProjectionMatrix = new osg::RefMatrix();
             newProjectionMatrix->makePerspective(fov, aspect, zNear, zFar);
-            cv->pushProjectionMatrix(newProjectionMatrix);
+            osg::ref_ptr<osg::RefMatrix> invertedOldMatrix = cv->getProjectionMatrix();
+            invertedOldMatrix = new osg::RefMatrix(osg::RefMatrix::inverse(*invertedOldMatrix));
+            osg::ref_ptr<osg::RefMatrix> viewMatrix = new osg::RefMatrix(*cv->getModelViewMatrix());
+            viewMatrix->postMult(*newProjectionMatrix);
+            viewMatrix->postMult(*invertedOldMatrix);
+            cv->pushModelViewMatrix(viewMatrix, osg::Transform::ReferenceFrame::ABSOLUTE_RF);
             traverse(node, nv);
-            cv->popProjectionMatrix();
+            cv->popModelViewMatrix();
         }
         else
             traverse(node, nv);
@@ -389,6 +439,8 @@ void NpcAnimation::setRenderBin()
 
 void NpcAnimation::rebuild()
 {
+    mScabbard.reset();
+    mHolsteredShield.reset();
     updateNpcBase();
 
     MWBase::Environment::get().getMechanicsManager()->forceStateUpdate(mPtr);
@@ -417,80 +469,107 @@ void NpcAnimation::updateNpcBase()
 
     const MWWorld::ESMStore &store = MWBase::Environment::get().getWorld()->getStore();
     const ESM::Race *race = store.get<ESM::Race>().find(mNpc->mRace);
-    bool isWerewolf = (mNpcType == Type_Werewolf);
-    bool isVampire = (mNpcType == Type_Vampire);
+    NpcType curType = getNpcType();
+    bool isWerewolf = (curType == Type_Werewolf);
+    bool isVampire = (curType == Type_Vampire);
     bool isFemale = !mNpc->isMale();
 
-    if (isWerewolf)
-    {
-        mHeadModel = "meshes\\" + store.get<ESM::BodyPart>().find("WerewolfHead")->mModel;
-        mHairModel = "meshes\\" + store.get<ESM::BodyPart>().find("WerewolfHair")->mModel;
-    }
-    else
-    {
-        mHeadModel = "";
-        const std::string& vampireHead = getVampireHead(mNpc->mRace, isFemale);
-        if (isVampire && !vampireHead.empty())
-            mHeadModel = vampireHead;
-        else if (!mNpc->mHead.empty())
-        {
-            const ESM::BodyPart* bp = store.get<ESM::BodyPart>().search(mNpc->mHead);
-            if (bp)
-                mHeadModel = "meshes\\" + bp->mModel;
-            else
-                Log(Debug::Warning) << "Warning: Failed to load body part '" << mNpc->mHead << "'";
-        }
+    mHeadModel.clear();
+    mHairModel.clear();
 
-        mHairModel = "";
-        if (!mNpc->mHair.empty())
-        {
-            const ESM::BodyPart* bp = store.get<ESM::BodyPart>().search(mNpc->mHair);
-            if (bp)
-                mHairModel = "meshes\\" + bp->mModel;
-            else
-                Log(Debug::Warning) << "Warning: Failed to load body part '" << mNpc->mHair << "'";
-        }
+    std::string headName = isWerewolf ? "WerewolfHead" : mNpc->mHead;
+    std::string hairName = isWerewolf ? "WerewolfHair" : mNpc->mHair;
+
+    if (!headName.empty())
+    {
+        const ESM::BodyPart* bp = store.get<ESM::BodyPart>().search(headName);
+        if (bp)
+            mHeadModel = "meshes\\" + bp->mModel;
+        else
+            Log(Debug::Warning) << "Warning: Failed to load body part '" << headName << "'";
     }
+
+    if (!hairName.empty())
+    {
+        const ESM::BodyPart* bp = store.get<ESM::BodyPart>().search(hairName);
+        if (bp)
+            mHairModel = "meshes\\" + bp->mModel;
+        else
+            Log(Debug::Warning) << "Warning: Failed to load body part '" << hairName << "'";
+    }
+
+    const std::string& vampireHead = getVampireHead(mNpc->mRace, isFemale);
+    if (!isWerewolf && isVampire && !vampireHead.empty())
+        mHeadModel = vampireHead;
 
     bool is1stPerson = mViewMode == VM_FirstPerson;
     bool isBeast = (race->mData.mFlags & ESM::Race::Beast) != 0;
 
-    std::string smodel = SceneUtil::getActorSkeleton(is1stPerson, isFemale, isBeast, isWerewolf);
-    smodel = Misc::ResourceHelpers::correctActorModelPath(smodel, mResourceSystem->getVFS());
+    std::string defaultSkeleton = SceneUtil::getActorSkeleton(is1stPerson, isFemale, isBeast, isWerewolf);
+    defaultSkeleton = Misc::ResourceHelpers::correctActorModelPath(defaultSkeleton, mResourceSystem->getVFS());
+
+    std::string smodel = defaultSkeleton;
+    if (!is1stPerson && !isWerewolf && !mNpc->mModel.empty())
+        smodel = Misc::ResourceHelpers::correctActorModelPath("meshes\\" + mNpc->mModel, mResourceSystem->getVFS());
 
     setObjectRoot(smodel, true, true, false);
+
+    updateParts();
 
     if(!is1stPerson)
     {
         const std::string base = "meshes\\xbase_anim.nif";
-        if (smodel != base)
+        if (smodel != base && !isWerewolf)
             addAnimSource(base, smodel);
+
+        if (smodel != defaultSkeleton && base != defaultSkeleton)
+            addAnimSource(defaultSkeleton, smodel);
 
         addAnimSource(smodel, smodel);
 
-        if(!isWerewolf)
-        {
-            if(mNpc->mModel.length() > 0)
-                addAnimSource(Misc::ResourceHelpers::correctActorModelPath("meshes\\" + mNpc->mModel, mResourceSystem->getVFS()), smodel);
-            if(Misc::StringUtils::lowerCase(mNpc->mRace).find("argonian") != std::string::npos)
-                addAnimSource("meshes\\xargonian_swimkna.nif", smodel);
-        }
+        if(!isWerewolf && Misc::StringUtils::lowerCase(mNpc->mRace).find("argonian") != std::string::npos)
+            addAnimSource("meshes\\xargonian_swimkna.nif", smodel);
     }
     else
     {
         const std::string base = "meshes\\xbase_anim.1st.nif";
-        if (smodel != base)
+        if (smodel != base && !isWerewolf)
             addAnimSource(base, smodel);
 
         addAnimSource(smodel, smodel);
 
-        mObjectRoot->setNodeMask(Mask_FirstPerson);
+        mObjectRoot->setNodeMask(SceneUtil::Mask_FirstPerson);
         mObjectRoot->addCullCallback(new OverrideFieldOfViewCallback(mFirstPersonFieldOfView));
     }
 
-    updateParts();
-
     mWeaponAnimationTime->updateStartTime();
+}
+
+std::string NpcAnimation::getShieldMesh(MWWorld::ConstPtr shield) const
+{
+    std::string mesh = shield.getClass().getModel(shield);
+    const ESM::Armor *armor = shield.get<ESM::Armor>()->mBase;
+    const std::vector<ESM::PartReference>& bodyparts = armor->mParts.mParts;
+    // Try to recover the body part model, use ground model as a fallback otherwise.
+    if (!bodyparts.empty())
+        mesh = getShieldBodypartMesh(bodyparts, !mNpc->isMale());
+
+    if (mesh.empty())
+        return std::string();
+
+    std::string holsteredName = mesh;
+    holsteredName = holsteredName.replace(holsteredName.size()-4, 4, "_sh.nif");
+    if(mResourceSystem->getVFS()->exists(holsteredName))
+    {
+        osg::ref_ptr<osg::Node> shieldTemplate = mResourceSystem->getSceneManager()->getInstance(holsteredName);
+        SceneUtil::FindByNameVisitor findVisitor ("Bip01 Sheath");
+        shieldTemplate->accept(findVisitor);
+        osg::ref_ptr<osg::Node> sheathNode = findVisitor.mFoundNode;
+        if(!sheathNode)
+            return std::string();
+    }
+
+    return mesh;
 }
 
 void NpcAnimation::updateParts()
@@ -498,14 +577,7 @@ void NpcAnimation::updateParts()
     if (!mObjectRoot.get())
         return;
 
-    const MWWorld::Class &cls = mPtr.getClass();
-
-    NpcType curType = Type_Normal;
-    if (cls.getCreatureStats(mPtr).getMagicEffects().get(ESM::MagicEffect::Vampirism).getMagnitude() > 0)
-        curType = Type_Vampire;
-    if (cls.getNpcStats(mPtr).isWerewolf())
-        curType = Type_Werewolf;
-
+    NpcType curType = getNpcType();
     if (curType != mNpcType)
     {
         mNpcType = curType;
@@ -518,7 +590,7 @@ void NpcAnimation::updateParts()
         int mBasePriority;
     } slotlist[] = {
         // FIXME: Priority is based on the number of reserved slots. There should be a better way.
-        { MWWorld::InventoryStore::Slot_Robe,         12 },
+        { MWWorld::InventoryStore::Slot_Robe,         11 },
         { MWWorld::InventoryStore::Slot_Skirt,         3 },
         { MWWorld::InventoryStore::Slot_Helmet,        0 },
         { MWWorld::InventoryStore::Slot_Cuirass,       0 },
@@ -535,7 +607,7 @@ void NpcAnimation::updateParts()
     };
     static const size_t slotlistsize = sizeof(slotlist)/sizeof(slotlist[0]);
 
-    bool wasArrowAttached = (mAmmunition.get() != nullptr);
+    bool wasArrowAttached = isArrowAttached();
     mAmmunition.reset();
 
     const MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
@@ -553,7 +625,7 @@ void NpcAnimation::updateParts()
 
         int prio = 1;
         bool enchantedGlow = !store->getClass().getEnchantment(*store).empty();
-        osg::Vec4f glowColor = getEnchantmentColor(*store);
+        osg::Vec4f glowColor = store->getClass().getEnchantmentColor(*store);
         if(store->getTypeName() == typeid(ESM::Clothing).name())
         {
             prio = ((slotlist[i].mBasePriority+1)<<1) + 0;
@@ -572,7 +644,7 @@ void NpcAnimation::updateParts()
             ESM::PartReferenceType parts[] = {
                 ESM::PRT_Groin, ESM::PRT_Skirt, ESM::PRT_RLeg, ESM::PRT_LLeg,
                 ESM::PRT_RUpperarm, ESM::PRT_LUpperarm, ESM::PRT_RKnee, ESM::PRT_LKnee,
-                ESM::PRT_RForearm, ESM::PRT_LForearm
+                ESM::PRT_RForearm, ESM::PRT_LForearm, ESM::PRT_Cuirass
             };
             size_t parts_size = sizeof(parts)/sizeof(parts[0]);
             for(size_t p = 0;p < parts_size;++p)
@@ -613,7 +685,7 @@ void NpcAnimation::updateParts()
     showWeapons(mShowWeapons);
     showCarriedLeft(mShowCarriedLeft);
 
-    bool isWerewolf = (mNpcType == Type_Werewolf);
+    bool isWerewolf = (getNpcType() == Type_Werewolf);
     std::string race = (isWerewolf ? "werewolf" : Misc::StringUtils::lowerCase(mNpc->mRace));
 
     const std::vector<const ESM::BodyPart*> &parts = getBodyParts(race, !mNpc->isMale(), mViewMode == VM_FirstPerson, isWerewolf);
@@ -630,9 +702,6 @@ void NpcAnimation::updateParts()
 
     if (wasArrowAttached)
         attachArrow();
-
-    if (mAlpha != 1.f)
-        mResourceSystem->getSceneManager()->recreateShaders(mObjectRoot);
 }
 
 
@@ -648,7 +717,7 @@ PartHolderPtr NpcAnimation::insertBoundedPart(const std::string& model, const st
 
     osg::ref_ptr<osg::Node> attached = SceneUtil::attach(instance, mObjectRoot, bonefilter, found->second);
     if (enchantedGlow)
-        addGlow(attached, *glowColor);
+        mGlowUpdater = SceneUtil::addEnchantedGlow(attached, mResourceSystem, *glowColor);
 
     return PartHolderPtr(new PartHolder(attached));
 }
@@ -711,10 +780,7 @@ void NpcAnimation::removePartGroup(int group)
 
 bool NpcAnimation::isFirstPersonPart(const ESM::BodyPart* bodypart)
 {
-    return (bodypart->mId.size() >= 3)
-        && bodypart->mId[bodypart->mId.size()-3] == '1'
-        && bodypart->mId[bodypart->mId.size()-2] == 's'
-        && bodypart->mId[bodypart->mId.size()-1] == 't';
+    return bodypart->mId.size() >= 3 && bodypart->mId.substr(bodypart->mId.size()-3, 3) == "1st";
 }
 
 bool NpcAnimation::isFemalePart(const ESM::BodyPart* bodypart)
@@ -732,7 +798,26 @@ bool NpcAnimation::addOrReplaceIndividualPart(ESM::PartReferenceType type, int g
     mPartPriorities[type] = priority;
     try
     {
-        const std::string& bonename = sPartList.at(type);
+        std::string bonename = sPartList.at(type);
+        if (type == ESM::PRT_Weapon)
+        {
+            const MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
+            MWWorld::ConstContainerStoreIterator weapon = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+            if(weapon != inv.end() && weapon->getTypeName() == typeid(ESM::Weapon).name())
+            {
+                int weaponType = weapon->get<ESM::Weapon>()->mBase->mData.mType;
+                const std::string weaponBonename = MWMechanics::getWeaponType(weaponType)->mAttachBone;
+
+                if (weaponBonename != bonename)
+                {
+                    const NodeMap& nodeMap = getNodeMap();
+                    NodeMap::const_iterator found = nodeMap.find(Misc::StringUtils::lowerCase(weaponBonename));
+                    if (found != nodeMap.end())
+                        bonename = weaponBonename;
+                }
+            }
+        }
+
         // PRT_Hair seems to be the only type that breaks consistency and uses a filter that's different from the attachment bone
         const std::string bonefilter = (type == ESM::PRT_Hair) ? "hair" : bonename;
         mObjectParts[type] = insertBoundedPart(mesh, bonename, bonefilter, enchantedGlow, glowColor);
@@ -774,16 +859,16 @@ bool NpcAnimation::addOrReplaceIndividualPart(ESM::PartReferenceType type, int g
                     osg::Object* obj = node->getUserDataContainer()->getUserObject(i);
                     if (NifOsg::TextKeyMapHolder* keys = dynamic_cast<NifOsg::TextKeyMapHolder*>(obj))
                     {
-                        for (NifOsg::TextKeyMap::const_iterator it = keys->mTextKeys.begin(); it != keys->mTextKeys.end(); ++it)
+                        for (const auto &key : keys->mTextKeys)
                         {
-                            if (Misc::StringUtils::ciEqual(it->second, "talk: start"))
-                                mHeadAnimationTime->setTalkStart(it->first);
-                            if (Misc::StringUtils::ciEqual(it->second, "talk: stop"))
-                                mHeadAnimationTime->setTalkStop(it->first);
-                            if (Misc::StringUtils::ciEqual(it->second, "blink: start"))
-                                mHeadAnimationTime->setBlinkStart(it->first);
-                            if (Misc::StringUtils::ciEqual(it->second, "blink: stop"))
-                                mHeadAnimationTime->setBlinkStop(it->first);
+                            if (Misc::StringUtils::ciEqual(key.second, "talk: start"))
+                                mHeadAnimationTime->setTalkStart(key.first);
+                            if (Misc::StringUtils::ciEqual(key.second, "talk: stop"))
+                                mHeadAnimationTime->setTalkStop(key.first);
+                            if (Misc::StringUtils::ciEqual(key.second, "blink: start"))
+                                mHeadAnimationTime->setBlinkStart(key.first);
+                            if (Misc::StringUtils::ciEqual(key.second, "blink: stop"))
+                                mHeadAnimationTime->setBlinkStop(key.first);
                         }
 
                         break;
@@ -809,16 +894,15 @@ void NpcAnimation::addPartGroup(int group, int priority, const std::vector<ESM::
     const MWWorld::Store<ESM::BodyPart> &partStore = store.get<ESM::BodyPart>();
 
     const char *ext = (mViewMode == VM_FirstPerson) ? ".1st" : "";
-    std::vector<ESM::PartReference>::const_iterator part(parts.begin());
-    for(;part != parts.end();++part)
+    for(const ESM::PartReference& part : parts)
     {
-        const ESM::BodyPart *bodypart = 0;
-        if(!mNpc->isMale() && !part->mFemale.empty())
+        const ESM::BodyPart *bodypart = nullptr;
+        if(!mNpc->isMale() && !part.mFemale.empty())
         {
-            bodypart = partStore.search(part->mFemale+ext);
+            bodypart = partStore.search(part.mFemale+ext);
             if(!bodypart && mViewMode == VM_FirstPerson)
             {
-                bodypart = partStore.search(part->mFemale);
+                bodypart = partStore.search(part.mFemale);
                 if(bodypart && !(bodypart->mData.mPart == ESM::BodyPart::MP_Hand ||
                                  bodypart->mData.mPart == ESM::BodyPart::MP_Wrist ||
                                  bodypart->mData.mPart == ESM::BodyPart::MP_Forearm ||
@@ -826,14 +910,14 @@ void NpcAnimation::addPartGroup(int group, int priority, const std::vector<ESM::
                     bodypart = nullptr;
             }
             else if (!bodypart)
-                Log(Debug::Warning) << "Warning: Failed to find body part '" << part->mFemale << "'";
+                Log(Debug::Warning) << "Warning: Failed to find body part '" << part.mFemale << "'";
         }
-        if(!bodypart && !part->mMale.empty())
+        if(!bodypart && !part.mMale.empty())
         {
-            bodypart = partStore.search(part->mMale+ext);
+            bodypart = partStore.search(part.mMale+ext);
             if(!bodypart && mViewMode == VM_FirstPerson)
             {
-                bodypart = partStore.search(part->mMale);
+                bodypart = partStore.search(part.mMale);
                 if(bodypart && !(bodypart->mData.mPart == ESM::BodyPart::MP_Hand ||
                                  bodypart->mData.mPart == ESM::BodyPart::MP_Wrist ||
                                  bodypart->mData.mPart == ESM::BodyPart::MP_Forearm ||
@@ -841,13 +925,13 @@ void NpcAnimation::addPartGroup(int group, int priority, const std::vector<ESM::
                     bodypart = nullptr;
             }
             else if (!bodypart)
-                Log(Debug::Warning) << "Warning: Failed to find body part '" << part->mMale << "'";
+                Log(Debug::Warning) << "Warning: Failed to find body part '" << part.mMale << "'";
         }
 
         if(bodypart)
-            addOrReplaceIndividualPart((ESM::PartReferenceType)part->mPart, group, priority, "meshes\\"+bodypart->mModel, enchantedGlow, glowColor);
+            addOrReplaceIndividualPart((ESM::PartReferenceType)part.mPart, group, priority, "meshes\\"+bodypart->mModel, enchantedGlow, glowColor);
         else
-            reserveIndividualPart((ESM::PartReferenceType)part->mPart, group, priority);
+            reserveIndividualPart((ESM::PartReferenceType)part.mPart, group, priority);
     }
 }
 
@@ -866,7 +950,7 @@ void NpcAnimation::addControllers()
             osg::MatrixTransform* node = found->second.get();
             mFirstPersonNeckController = new NeckController(mObjectRoot.get());
             node->addUpdateCallback(mFirstPersonNeckController);
-            mActiveControllers.insert(std::make_pair(node, mFirstPersonNeckController));
+            mActiveControllers.emplace(node, mFirstPersonNeckController);
         }
     }
     else if (mViewMode == VM_Normal)
@@ -885,7 +969,7 @@ void NpcAnimation::showWeapons(bool showWeapon)
         MWWorld::ConstContainerStoreIterator weapon = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
         if(weapon != inv.end())
         {
-            osg::Vec4f glowColor = getEnchantmentColor(*weapon);
+            osg::Vec4f glowColor = weapon->getClass().getEnchantmentColor(*weapon);
             std::string mesh = weapon->getClass().getModel(*weapon);
             addOrReplaceIndividualPart(ESM::PRT_Weapon, MWWorld::InventoryStore::Slot_CarriedRight, 1,
                                        mesh, !weapon->getClass().getEnchantment(*weapon).empty(), &glowColor);
@@ -894,13 +978,12 @@ void NpcAnimation::showWeapons(bool showWeapon)
             if (weapon->getTypeName() == typeid(ESM::Weapon).name() &&
                     weapon->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::MarksmanCrossbow)
             {
+                int ammotype = MWMechanics::getWeaponType(ESM::Weapon::MarksmanCrossbow)->mAmmoType;
                 MWWorld::ConstContainerStoreIterator ammo = inv.getSlot(MWWorld::InventoryStore::Slot_Ammunition);
-                if (ammo != inv.end() && ammo->get<ESM::Weapon>()->mBase->mData.mType == ESM::Weapon::Bolt)
+                if (ammo != inv.end() && ammo->get<ESM::Weapon>()->mBase->mData.mType == ammotype)
                     attachArrow();
             }
         }
-        if (mAlpha != 1.f)
-            mResourceSystem->getSceneManager()->recreateShaders(mObjectRoot);
     }
     else
     {
@@ -909,6 +992,9 @@ void NpcAnimation::showWeapons(bool showWeapon)
         if (mPtr == MWMechanics::getPlayer())
             MWBase::Environment::get().getWorld()->getPlayer().setAttackingOrSpell(false);
     }
+
+    updateHolsteredWeapon(!mShowWeapons);
+    updateQuiver();
 }
 
 void NpcAnimation::showCarriedLeft(bool show)
@@ -918,29 +1004,51 @@ void NpcAnimation::showCarriedLeft(bool show)
     MWWorld::ConstContainerStoreIterator iter = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedLeft);
     if(show && iter != inv.end())
     {
-        osg::Vec4f glowColor = getEnchantmentColor(*iter);
+        osg::Vec4f glowColor = iter->getClass().getEnchantmentColor(*iter);
         std::string mesh = iter->getClass().getModel(*iter);
-        if (addOrReplaceIndividualPart(ESM::PRT_Shield, MWWorld::InventoryStore::Slot_CarriedLeft, 1,
-                                   mesh, !iter->getClass().getEnchantment(*iter).empty(), &glowColor))
+        // For shields we must try to use the body part model
+        if (iter->getTypeName() == typeid(ESM::Armor).name())
         {
+            const ESM::Armor *armor = iter->get<ESM::Armor>()->mBase;
+            const std::vector<ESM::PartReference>& bodyparts = armor->mParts.mParts;
+            if (!bodyparts.empty())
+                mesh = getShieldBodypartMesh(bodyparts, !mNpc->isMale());
+        }
+        if (mesh.empty() || addOrReplaceIndividualPart(ESM::PRT_Shield, MWWorld::InventoryStore::Slot_CarriedLeft, 1,
+                                        mesh, !iter->getClass().getEnchantment(*iter).empty(), &glowColor))
+        {
+            if (mesh.empty())
+                reserveIndividualPart(ESM::PRT_Shield, MWWorld::InventoryStore::Slot_CarriedLeft, 1);
             if (iter->getTypeName() == typeid(ESM::Light).name() && mObjectParts[ESM::PRT_Shield])
                 addExtraLight(mObjectParts[ESM::PRT_Shield]->getNode()->asGroup(), iter->get<ESM::Light>()->mBase);
         }
-        if (mAlpha != 1.f)
-            mResourceSystem->getSceneManager()->recreateShaders(mObjectRoot);
     }
     else
         removeIndividualPart(ESM::PRT_Shield);
+
+    updateHolsteredShield(mShowCarriedLeft);
 }
 
 void NpcAnimation::attachArrow()
 {
     WeaponAnimation::attachArrow(mPtr);
+
+    const MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
+    MWWorld::ConstContainerStoreIterator ammo = inv.getSlot(MWWorld::InventoryStore::Slot_Ammunition);
+    if (ammo != inv.end() && !ammo->getClass().getEnchantment(*ammo).empty())
+    {
+        osg::Group* bone = getArrowBone();
+        if (bone != nullptr && bone->getNumChildren())
+            SceneUtil::addEnchantedGlow(bone->getChild(0), mResourceSystem, ammo->getClass().getEnchantmentColor(*ammo));
+    }
+
+    updateQuiver();
 }
 
 void NpcAnimation::releaseArrow(float attackStrength)
 {
     WeaponAnimation::releaseArrow(mPtr, attackStrength);
+    updateQuiver();
 }
 
 osg::Group* NpcAnimation::getArrowBone()
@@ -949,7 +1057,15 @@ osg::Group* NpcAnimation::getArrowBone()
     if (!part)
         return nullptr;
 
-    SceneUtil::FindByNameVisitor findVisitor ("ArrowBone");
+    const MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
+    MWWorld::ConstContainerStoreIterator weapon = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+    if(weapon == inv.end() || weapon->getTypeName() != typeid(ESM::Weapon).name())
+        return nullptr;
+
+    int type = weapon->get<ESM::Weapon>()->mBase->mData.mType;
+    int ammoType = MWMechanics::getWeaponType(type)->mAmmoType;
+
+    SceneUtil::FindByNameVisitor findVisitor (MWMechanics::getWeaponType(ammoType)->mAttachBone);
     part->getNode()->accept(findVisitor);
 
     return findVisitor.mFoundNode;
@@ -1001,13 +1117,21 @@ void NpcAnimation::enableHeadAnimation(bool enable)
     mHeadAnimationTime->setEnabled(enable);
 }
 
-void NpcAnimation::setWeaponGroup(const std::string &group)
+void NpcAnimation::setWeaponGroup(const std::string &group, bool relativeDuration)
 {
-    mWeaponAnimationTime->setGroup(group);
+    mWeaponAnimationTime->setGroup(group, relativeDuration);
 }
 
 void NpcAnimation::equipmentChanged()
 {
+    static const bool shieldSheathing = Settings::Manager::getBool("shield sheathing", "Game");
+    if (shieldSheathing)
+    {
+        int weaptype = ESM::Weapon::None;
+        MWMechanics::getActiveWeapon(mPtr, &weaptype);
+        showCarriedLeft(updateCarriedLeftVisible(weaptype));
+    }
+
     updateParts();
 }
 
@@ -1058,40 +1182,39 @@ const std::vector<const ESM::BodyPart *>& NpcAnimation::getBodyParts(const std::
         std::vector<const ESM::BodyPart*>& parts = sRaceMapping[std::make_pair(race, flags)];
 
         typedef std::multimap<ESM::BodyPart::MeshPart,ESM::PartReferenceType> BodyPartMapType;
-        static BodyPartMapType sBodyPartMap;
-        if(sBodyPartMap.empty())
+        static const BodyPartMapType sBodyPartMap =
         {
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Neck, ESM::PRT_Neck));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Chest, ESM::PRT_Cuirass));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Groin, ESM::PRT_Groin));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Hand, ESM::PRT_RHand));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Hand, ESM::PRT_LHand));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Wrist, ESM::PRT_RWrist));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Wrist, ESM::PRT_LWrist));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Forearm, ESM::PRT_RForearm));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Forearm, ESM::PRT_LForearm));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Upperarm, ESM::PRT_RUpperarm));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Upperarm, ESM::PRT_LUpperarm));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Foot, ESM::PRT_RFoot));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Foot, ESM::PRT_LFoot));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Ankle, ESM::PRT_RAnkle));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Ankle, ESM::PRT_LAnkle));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Knee, ESM::PRT_RKnee));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Knee, ESM::PRT_LKnee));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Upperleg, ESM::PRT_RLeg));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Upperleg, ESM::PRT_LLeg));
-            sBodyPartMap.insert(std::make_pair(ESM::BodyPart::MP_Tail, ESM::PRT_Tail));
-        }
+            {ESM::BodyPart::MP_Neck, ESM::PRT_Neck},
+            {ESM::BodyPart::MP_Chest, ESM::PRT_Cuirass},
+            {ESM::BodyPart::MP_Groin, ESM::PRT_Groin},
+            {ESM::BodyPart::MP_Hand, ESM::PRT_RHand},
+            {ESM::BodyPart::MP_Hand, ESM::PRT_LHand},
+            {ESM::BodyPart::MP_Wrist, ESM::PRT_RWrist},
+            {ESM::BodyPart::MP_Wrist, ESM::PRT_LWrist},
+            {ESM::BodyPart::MP_Forearm, ESM::PRT_RForearm},
+            {ESM::BodyPart::MP_Forearm, ESM::PRT_LForearm},
+            {ESM::BodyPart::MP_Upperarm, ESM::PRT_RUpperarm},
+            {ESM::BodyPart::MP_Upperarm, ESM::PRT_LUpperarm},
+            {ESM::BodyPart::MP_Foot, ESM::PRT_RFoot},
+            {ESM::BodyPart::MP_Foot, ESM::PRT_LFoot},
+            {ESM::BodyPart::MP_Ankle, ESM::PRT_RAnkle},
+            {ESM::BodyPart::MP_Ankle, ESM::PRT_LAnkle},
+            {ESM::BodyPart::MP_Knee, ESM::PRT_RKnee},
+            {ESM::BodyPart::MP_Knee, ESM::PRT_LKnee},
+            {ESM::BodyPart::MP_Upperleg, ESM::PRT_RLeg},
+            {ESM::BodyPart::MP_Upperleg, ESM::PRT_LLeg},
+            {ESM::BodyPart::MP_Tail, ESM::PRT_Tail}
+        };
 
         parts.resize(ESM::PRT_Count, nullptr);
 
+        if (werewolf)
+            return parts;
+
         const MWWorld::ESMStore &store = MWBase::Environment::get().getWorld()->getStore();
-        const MWWorld::Store<ESM::BodyPart> &partStore = store.get<ESM::BodyPart>();
-        for(MWWorld::Store<ESM::BodyPart>::iterator it = partStore.begin(); it != partStore.end(); ++it)
+
+        for(const ESM::BodyPart& bodypart : store.get<ESM::BodyPart>())
         {
-            if(werewolf)
-                break;
-            const ESM::BodyPart& bodypart = *it;
             if (bodypart.mData.mFlags & ESM::BodyPart::BPF_NotPlayable)
                 continue;
             if (bodypart.mData.mType != ESM::BodyPart::MT_Skin)
@@ -1183,6 +1306,11 @@ const std::vector<const ESM::BodyPart *>& NpcAnimation::getBodyParts(const std::
 void NpcAnimation::setAccurateAiming(bool enabled)
 {
     mAccurateAiming = enabled;
+}
+
+bool NpcAnimation::isArrowAttached() const
+{
+    return mAmmunition != nullptr;
 }
 
 }

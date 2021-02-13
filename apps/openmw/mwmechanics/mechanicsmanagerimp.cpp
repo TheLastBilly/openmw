@@ -1,8 +1,5 @@
 #include "mechanicsmanagerimp.hpp"
 
-#include <limits.h>
-#include <set>
-
 #include <components/misc/rng.hpp>
 
 #include <components/esm/esmwriter.hpp>
@@ -24,7 +21,6 @@
 
 #include "aicombat.hpp"
 #include "aipursue.hpp"
-#include "aitravel.hpp"
 #include "spellcasting.hpp"
 #include "autocalcspell.hpp"
 #include "npcstats.hpp"
@@ -129,10 +125,9 @@ namespace MWMechanics
                 npcStats.getSkill (i).setBase (5 + bonus);
             }
 
-            for (std::vector<std::string>::const_iterator iter (race->mPowers.mList.begin());
-                iter!=race->mPowers.mList.end(); ++iter)
+            for (const std::string &power : race->mPowers.mList)
             {
-                creatureStats.getSpells().add (*iter);
+                creatureStats.getSpells().add(power);
             }
         }
 
@@ -145,10 +140,9 @@ namespace MWMechanics
             const ESM::BirthSign *sign =
                 esmStore.get<ESM::BirthSign>().find(signId);
 
-            for (std::vector<std::string>::const_iterator iter (sign->mPowers.mList.begin());
-                iter!=sign->mPowers.mList.end(); ++iter)
+            for (const std::string &power : sign->mPowers.mList)
             {
-                creatureStats.getSpells().add (*iter);
+                creatureStats.getSpells().add(power);
             }
         }
 
@@ -218,8 +212,8 @@ namespace MWMechanics
 
         std::vector<std::string> selectedSpells = autoCalcPlayerSpells(skills, attributes, race);
 
-        for (std::vector<std::string>::iterator it = selectedSpells.begin(); it != selectedSpells.end(); ++it)
-            creatureStats.getSpells().add(*it);
+        for (const std::string &spell : selectedSpells)
+            creatureStats.getSpells().add(spell);
 
         // forced update and current value adjustments
         mActors.updateActor (ptr, 0);
@@ -241,7 +235,7 @@ namespace MWMechanics
     // mWatchedTimeToStartDrowning = -1 for correct drowning state check,
     // if stats.getTimeToStartDrowning() == 0 already on game start
     MechanicsManager::MechanicsManager()
-    : mWatchedTimeToStartDrowning(-1), mWatchedStatsEmpty (true), mUpdatePlayer (true), mClassSelected (false),
+    : mWatchedLevel(-1), mWatchedTimeToStartDrowning(-1), mWatchedStatsEmpty (true), mUpdatePlayer (true), mClassSelected (false),
       mRaceSelected (false), mAI(true)
     {
         //buildPlayer no longer here, needs to be done explicitly after all subsystems are up and running
@@ -291,14 +285,6 @@ namespace MWMechanics
     void MechanicsManager::watchActor(const MWWorld::Ptr& ptr)
     {
         mWatched = ptr;
-    }
-
-    void MechanicsManager::advanceTime (float duration)
-    {
-        // Uses ingame time, but scaled to real time
-        duration /= MWBase::Environment::get().getWorld()->getTimeScaleFactor();
-        MWWorld::Ptr player = getPlayer();
-        player.getClass().getInventoryStore(player).rechargeItems(duration);
     }
 
     void MechanicsManager::update(float duration, bool paused)
@@ -366,7 +352,11 @@ namespace MWMechanics
                 }
             }
 
-            winMgr->setValue("level", stats.getLevel());
+            if(stats.getLevel() != mWatchedLevel)
+            {
+                mWatchedLevel = stats.getLevel();
+                winMgr->setValue("level", mWatchedLevel);
+            }
 
             mWatchedStatsEmpty = false;
 
@@ -382,10 +372,15 @@ namespace MWMechanics
             MWWorld::ContainerStoreIterator enchantItem = inv.getSelectedEnchantItem();
             if (enchantItem != inv.end())
                 winMgr->setSelectedEnchantItem(*enchantItem);
-            else if (!winMgr->getSelectedSpell().empty())
-                winMgr->setSelectedSpell(winMgr->getSelectedSpell(), int(MWMechanics::getSpellSuccessChance(winMgr->getSelectedSpell(), mWatched)));
             else
-                winMgr->unsetSelectedSpell();
+            {
+                const std::string& spell = winMgr->getSelectedSpell();
+                if (!spell.empty())
+                    winMgr->setSelectedSpell(spell, int(MWMechanics::getSpellSuccessChance(spell, mWatched)));
+                else
+                    winMgr->unsetSelectedSpell();
+            }
+
         }
 
         if (mUpdatePlayer)
@@ -450,6 +445,11 @@ namespace MWMechanics
         }
     }
 
+    void MechanicsManager::notifyDied(const MWWorld::Ptr& actor)
+    {
+        mActors.notifyDied(actor);
+    }
+
     float MechanicsManager::getActorsProcessingRange() const
     {
         return mActors.getProcessingRange();
@@ -472,20 +472,25 @@ namespace MWMechanics
 
     bool MechanicsManager::isSneaking(const MWWorld::Ptr& ptr)
     {
-        return mActors.isSneaking(ptr);
+        CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        bool animActive = mActors.isSneaking(ptr);
+        bool stanceOn = stats.getStance(MWMechanics::CreatureStats::Stance_Sneak);
+        bool inair = !world->isOnGround(ptr) && !world->isSwimming(ptr) && !world->isFlying(ptr);
+        return stanceOn && (animActive || inair);
     }
 
-    void MechanicsManager::rest(bool sleep)
+    void MechanicsManager::rest(double hours, bool sleep)
     {
         if (sleep)
-            MWBase::Environment::get().getWorld()->rest();
+            MWBase::Environment::get().getWorld()->rest(hours);
 
-        mActors.rest(sleep);
+        mActors.rest(hours, sleep);
     }
 
-    void MechanicsManager::restoreDynamicStats(MWWorld::Ptr actor, bool sleep)
+    void MechanicsManager::restoreDynamicStats(MWWorld::Ptr actor, double hours, bool sleep)
     {
-        mActors.restoreDynamicStats(actor, sleep);
+        mActors.restoreDynamicStats(actor, hours, sleep);
     }
 
     int MechanicsManager::getHoursToRest() const
@@ -671,8 +676,8 @@ namespace MWMechanics
         float f = std::min(0.2f * sellerStats.getAttribute(ESM::Attribute::Personality).getModified(), 10.f);
         float pcTerm = (clampedDisposition - 50 + a + b + c) * playerStats.getFatigueTerm();
         float npcTerm = (d + e + f) * sellerStats.getFatigueTerm();
-        float buyTerm = 0.01f * std::max(75.f, (100 - 0.5f * (pcTerm - npcTerm)));
-        float sellTerm = 0.01f * std::min(75.f, (50 - 0.5f * (npcTerm - pcTerm)));
+        float buyTerm = 0.01f * (100 - 0.5f * (pcTerm - npcTerm));
+        float sellTerm = 0.01f * (50 - 0.5f * (npcTerm - pcTerm));
         int offerPrice = int(basePrice * (buying ? buyTerm : sellTerm));
         return std::max(1, offerPrice);
     }
@@ -847,6 +852,20 @@ namespace MWMechanics
             return false;
     }
 
+    bool MechanicsManager::onOpen(const MWWorld::Ptr& ptr)
+    {
+        if(ptr.getClass().isActor())
+            return true;
+        else
+            return mObjects.onOpen(ptr);
+    }
+
+    void MechanicsManager::onClose(const MWWorld::Ptr& ptr)
+    {
+        if(!ptr.getClass().isActor())
+            mObjects.onClose(ptr);
+    }
+
     void MechanicsManager::persistAnimationStates()
     {
         mActors.persistAnimationStates();
@@ -887,9 +906,8 @@ namespace MWMechanics
             // Build a list of known bound item ID's
             const MWWorld::Store<ESM::GameSetting> &gameSettings = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>();
 
-            for (MWWorld::Store<ESM::GameSetting>::iterator currentIteration = gameSettings.begin(); currentIteration != gameSettings.end(); ++currentIteration)
+            for (const ESM::GameSetting &currentSetting : gameSettings)
             {
-                const ESM::GameSetting &currentSetting = *currentIteration;
                 std::string currentGMSTID = currentSetting.mId;
                 Misc::StringUtils::lowerCaseInPlace(currentGMSTID);
 
@@ -931,6 +949,9 @@ namespace MWMechanics
             return true;
         }
 
+        if (!target.getClass().hasToolTip(target))
+            return true;
+
         // TODO: implement a better check to check if target is owned bed
         if (target.getClass().isActivator() && target.getClass().getScript(target).compare(0, 3, "Bed") != 0)
             return true;
@@ -944,8 +965,7 @@ namespace MWMechanics
                 return true;
 
             // check if a player tries to pickpocket a target NPC
-            if(ptr.getClass().getCreatureStats(ptr).getStance(MWMechanics::CreatureStats::Stance_Sneak)
-                || target.getClass().getCreatureStats(target).getKnockedDown())
+            if (target.getClass().getCreatureStats(target).getKnockedDown() || isSneaking(ptr))
                 return false;
 
             return true;
@@ -973,7 +993,11 @@ namespace MWMechanics
         }
 
         if (!cellref.getOwner().empty())
-            victim = MWBase::Environment::get().getWorld()->searchPtr(cellref.getOwner(), true);
+            victim = MWBase::Environment::get().getWorld()->searchPtr(cellref.getOwner(), true, false);
+
+        // A special case for evidence chest - we should not allow to take items even if it is technically permitted
+        if (Misc::StringUtils::ciEqual(cellref.getRefId(), "stolen_goods"))
+            return false;
 
         return (!isOwned && !isFactionOwned);
     }
@@ -995,7 +1019,7 @@ namespace MWMechanics
         if (isAllowedToUse(ptr, bed, victim))
             return false;
 
-        if(commitCrime(ptr, victim, OT_SleepingInOwnedBed))
+        if(commitCrime(ptr, victim, OT_SleepingInOwnedBed, bed.getCellRef().getFaction()))
         {
             MWBase::Environment::get().getWindowManager()->messageBox("#{sNotifyMessage64}");
             return true;
@@ -1004,12 +1028,12 @@ namespace MWMechanics
             return false;
     }
 
-    void MechanicsManager::objectOpened(const MWWorld::Ptr &ptr, const MWWorld::Ptr &item)
+    void MechanicsManager::unlockAttempted(const MWWorld::Ptr &ptr, const MWWorld::Ptr &item)
     {
         MWWorld::Ptr victim;
         if (isAllowedToUse(ptr, item, victim))
             return;
-        commitCrime(ptr, victim, OT_Trespassing);
+        commitCrime(ptr, victim, OT_Trespassing, item.getCellRef().getFaction());
     }
 
     std::vector<std::pair<std::string, int> > MechanicsManager::getStolenItemOwners(const std::string& itemid)
@@ -1090,7 +1114,7 @@ namespace MWMechanics
         // move items from player to owner and report about theft
         victim.getClass().getContainerStore(victim).add(item, toRemove, victim);
         store.remove(item, toRemove, player);
-        commitCrime(player, victim, OT_Theft, item.getClass().getValue(item) * toRemove);
+        commitCrime(player, victim, OT_Theft, item.getCellRef().getFaction(), item.getClass().getValue(item) * toRemove);
     }
 
     void MechanicsManager::confiscateStolenItems(const MWWorld::Ptr &player, const MWWorld::Ptr &targetContainer)
@@ -1120,7 +1144,7 @@ namespace MWMechanics
             store.remove(*it, toMove, player);
         }
         // TODO: unhardcode the locklevel
-        targetContainer.getClass().lock(targetContainer,50);
+        targetContainer.getCellRef().lock(50);
     }
 
     void MechanicsManager::itemTaken(const MWWorld::Ptr &ptr, const MWWorld::Ptr &item, const MWWorld::Ptr& container,
@@ -1173,16 +1197,15 @@ namespace MWMechanics
 
         if (!Misc::StringUtils::ciEqual(item.getCellRef().getRefId(), MWWorld::ContainerStore::sGoldId))
         {
-            const MWWorld::Ptr victimRef = MWBase::Environment::get().getWorld()->searchPtr(ownerCellRef->getOwner(), true);
-            if (victimRef.isEmpty() || !victimRef.getClass().getCreatureStats(victimRef).isDead())
+            if (victim.isEmpty() || (victim.getClass().isActor() && !victim.getClass().getCreatureStats(victim).isDead()))
                 mStolenItems[Misc::StringUtils::lowerCase(item.getCellRef().getRefId())][owner] += count;
         }
         if (alarm)
-            commitCrime(ptr, victim, OT_Theft, item.getClass().getValue(item) * count);
+            commitCrime(ptr, victim, OT_Theft, ownerCellRef->getFaction(), item.getClass().getValue(item) * count);
     }
 
 
-    bool MechanicsManager::commitCrime(const MWWorld::Ptr &player, const MWWorld::Ptr &victim, OffenseType type, int arg, bool victimAware)
+    bool MechanicsManager::commitCrime(const MWWorld::Ptr &player, const MWWorld::Ptr &victim, OffenseType type, const std::string& factionId, int arg, bool victimAware)
     {
         // NOTE: victim may be empty
 
@@ -1209,49 +1232,33 @@ namespace MWMechanics
 
         // Did anyone see it?
         bool crimeSeen = false;
-        for (std::vector<MWWorld::Ptr>::iterator it = neighbors.begin(); it != neighbors.end(); ++it)
+        for (const MWWorld::Ptr &neighbor : neighbors)
         {
-            if (*it == player)
-                continue; // skip player
-            if (it->getClass().getCreatureStats(*it).isDead())
+            if (!canReportCrime(neighbor, victim, playerFollowers))
                 continue;
 
-            // Unconsious actor can not report about crime
-            if (it->getClass().getCreatureStats(*it).getKnockedDown())
-                continue;
-
-            if ((*it == victim && victimAware)
-                    || (MWBase::Environment::get().getWorld()->getLOS(player, *it) && awarenessCheck(player, *it) )
+            if ((neighbor == victim && victimAware)
                     // Murder crime can be reported even if no one saw it (hearing is enough, I guess).
                     // TODO: Add mod support for stealth executions!
-                    || (type == OT_Murder && *it != victim))
+                    || (type == OT_Murder && neighbor != victim)
+                    || (MWBase::Environment::get().getWorld()->getLOS(player, neighbor) && awarenessCheck(player, neighbor)))
             {
-                // Crime reporting only applies to NPCs
-                if (!it->getClass().isNpc())
-                    continue;
-
-                if (it->getClass().getCreatureStats(*it).getAiSequence().isInCombat(victim))
-                    continue;
-
-                if (playerFollowers.find(*it) != playerFollowers.end())
-                    continue;
-
                 // NPC will complain about theft even if he will do nothing about it
                 if (type == OT_Theft || type == OT_Pickpocket)
-                    MWBase::Environment::get().getDialogueManager()->say(*it, "thief");
+                    MWBase::Environment::get().getDialogueManager()->say(neighbor, "thief");
 
                 crimeSeen = true;
             }
         }
 
         if (crimeSeen)
-            reportCrime(player, victim, type, arg);
+            reportCrime(player, victim, type, factionId, arg);
         else if (type == OT_Assault && !victim.isEmpty())
         {
             bool reported = false;
             if (victim.getClass().isClass(victim, "guard")
                 && !victim.getClass().getCreatureStats(victim).getAiSequence().hasPackage(AiPackage::TypeIdPursue))
-                reported = reportCrime(player, victim, type, arg);
+                reported = reportCrime(player, victim, type, std::string(), arg);
 
             if (!reported)
                 startCombat(victim, player); // TODO: combat should be started with an "unaware" flag, which makes the victim flee?
@@ -1282,7 +1289,7 @@ namespace MWMechanics
         return true;
     }
 
-    bool MechanicsManager::reportCrime(const MWWorld::Ptr &player, const MWWorld::Ptr &victim, OffenseType type, int arg)
+    bool MechanicsManager::reportCrime(const MWWorld::Ptr &player, const MWWorld::Ptr &victim, OffenseType type, const std::string& factionId, int arg)
     {
         const MWWorld::Store<ESM::GameSetting>& store = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>();
 
@@ -1361,66 +1368,66 @@ namespace MWMechanics
         getActorsSidingWith(player, playerFollowers);
 
         // Tell everyone (including the original reporter) in alarm range
-        for (std::vector<MWWorld::Ptr>::iterator it = neighbors.begin(); it != neighbors.end(); ++it)
+        for (const MWWorld::Ptr &actor : neighbors)
         {
-            if (!canReportCrime(*it, victim, playerFollowers))
+            if (!canReportCrime(actor, victim, playerFollowers))
                 continue;
 
             // Will the witness report the crime?
-            if (it->getClass().getCreatureStats(*it).getAiSetting(CreatureStats::AI_Alarm).getBase() >= 100)
+            if (actor.getClass().getCreatureStats(actor).getAiSetting(CreatureStats::AI_Alarm).getBase() >= 100)
             {
                 reported = true;
 
                 if (type == OT_Trespassing)
-                    MWBase::Environment::get().getDialogueManager()->say(*it, "intruder");
+                    MWBase::Environment::get().getDialogueManager()->say(actor, "intruder");
             }
         }
 
-        for (std::vector<MWWorld::Ptr>::iterator it = neighbors.begin(); it != neighbors.end(); ++it)
+        for (const MWWorld::Ptr &actor : neighbors)
         {
-            if (!canReportCrime(*it, victim, playerFollowers))
+            if (!canReportCrime(actor, victim, playerFollowers))
                 continue;
 
-            if (it->getClass().isClass(*it, "guard") && reported)
+            if (reported && actor.getClass().isClass(actor, "guard"))
             {
                 // Mark as Alarmed for dialogue
-                it->getClass().getCreatureStats(*it).setAlarmed(true);
+                actor.getClass().getCreatureStats(actor).setAlarmed(true);
 
                 // Set the crime ID, which we will use to calm down participants
                 // once the bounty has been paid.
-                it->getClass().getNpcStats(*it).setCrimeId(id);
+                actor.getClass().getNpcStats(actor).setCrimeId(id);
 
-                if (!it->getClass().getCreatureStats(*it).getAiSequence().hasPackage(AiPackage::TypeIdPursue))
+                if (!actor.getClass().getCreatureStats(actor).getAiSequence().hasPackage(AiPackage::TypeIdPursue))
                 {
-                    it->getClass().getCreatureStats(*it).getAiSequence().stack(AiPursue(player), *it);
+                    actor.getClass().getCreatureStats(actor).getAiSequence().stack(AiPursue(player), actor);
                 }
             }
             else
             {
-                float dispTerm = (*it == victim) ? dispVictim : disp;
+                float dispTerm = (actor == victim) ? dispVictim : disp;
 
-                float alarmTerm = 0.01f * it->getClass().getCreatureStats(*it).getAiSetting(CreatureStats::AI_Alarm).getBase();
+                float alarmTerm = 0.01f * actor.getClass().getCreatureStats(actor).getAiSetting(CreatureStats::AI_Alarm).getBase();
                 if (type == OT_Pickpocket && alarmTerm <= 0)
                     alarmTerm = 1.0;
 
-                if (*it != victim)
+                if (actor != victim)
                     dispTerm *= alarmTerm;
 
-                float fightTerm = static_cast<float>((*it == victim) ? fightVictim : fight);
+                float fightTerm = static_cast<float>((actor == victim) ? fightVictim : fight);
                 fightTerm += getFightDispositionBias(dispTerm);
-                fightTerm += getFightDistanceBias(*it, player);
+                fightTerm += getFightDistanceBias(actor, player);
                 fightTerm *= alarmTerm;
 
-                int observerFightRating = it->getClass().getCreatureStats(*it).getAiSetting(CreatureStats::AI_Fight).getBase();
+                int observerFightRating = actor.getClass().getCreatureStats(actor).getAiSetting(CreatureStats::AI_Fight).getBase();
                 if (observerFightRating + fightTerm > 100)
                     fightTerm = static_cast<float>(100 - observerFightRating);
                 fightTerm = std::max(0.f, fightTerm);
 
                 if (observerFightRating + fightTerm >= 100)
                 {
-                    startCombat(*it, player);
+                    startCombat(actor, player);
 
-                    NpcStats& observerStats = it->getClass().getNpcStats(*it);
+                    NpcStats& observerStats = actor.getClass().getNpcStats(actor);
                     // Apply aggression value to the base Fight rating, so that the actor can continue fighting
                     // after a Calm spell wears off
                     observerStats.setAiSetting(CreatureStats::AI_Fight, observerFightRating + static_cast<int>(fightTerm));
@@ -1439,7 +1446,6 @@ namespace MWMechanics
 
         if (reported)
         {
-            MWBase::Environment::get().getWindowManager()->messageBox("#{sCrimeMessage}");
             player.getClass().getNpcStats(player).setBounty(player.getClass().getNpcStats(player).getBounty()
                                                       + arg);
 
@@ -1452,6 +1458,14 @@ namespace MWMechanics
                 if (playerRanks.find(Misc::StringUtils::lowerCase(factionID)) != playerRanks.end())
                 {
                     player.getClass().getNpcStats(player).expell(factionID);
+                }
+            }
+            else if (!factionId.empty())
+            {
+                const std::map<std::string, int>& playerRanks = player.getClass().getNpcStats(player).getFactionRanks();
+                if (playerRanks.find(Misc::StringUtils::lowerCase(factionId)) != playerRanks.end())
+                {
+                    player.getClass().getNpcStats(player).expell(factionId);
                 }
             }
 
@@ -1475,22 +1489,24 @@ namespace MWMechanics
 
     bool MechanicsManager::actorAttacked(const MWWorld::Ptr &target, const MWWorld::Ptr &attacker)
     {
-        if (target == getPlayer() || !attacker.getClass().isActor())
+        const MWWorld::Ptr& player = getPlayer();
+        if (target == player || !attacker.getClass().isActor())
             return false;
 
-        std::set<MWWorld::Ptr> followersAttacker;
-        getActorsSidingWith(attacker, followersAttacker);
-
         MWMechanics::CreatureStats& statsTarget = target.getClass().getCreatureStats(target);
-
-        if (followersAttacker.find(target) != followersAttacker.end())
+        if (attacker == player)
         {
-            statsTarget.friendlyHit();
-
-            if (statsTarget.getFriendlyHits() < 4)
+            std::set<MWWorld::Ptr> followersAttacker;
+            getActorsSidingWith(attacker, followersAttacker);
+            if (followersAttacker.find(target) != followersAttacker.end())
             {
-                MWBase::Environment::get().getDialogueManager()->say(target, "hit");
-                return false;
+                statsTarget.friendlyHit();
+
+                if (statsTarget.getFriendlyHits() < 4)
+                {
+                    MWBase::Environment::get().getDialogueManager()->say(target, "hit");
+                    return false;
+                }
             }
         }
 
@@ -1499,9 +1515,9 @@ namespace MWMechanics
 
         AiSequence& seq = statsTarget.getAiSequence();
 
-        if (!attacker.isEmpty() && (attacker.getClass().getCreatureStats(attacker).getAiSequence().isInCombat(target)
-                                    || attacker == getPlayer())
-                && !seq.isInCombat(attacker))
+        if (!attacker.isEmpty()
+            && (attacker.getClass().getCreatureStats(attacker).getAiSequence().isInCombat(target) || attacker == player)
+            && !seq.isInCombat(attacker))
         {
             // Attacker is in combat with us, but we are not in combat with the attacker yet. Time to fight back.
             // Note: accidental or collateral damage attacks are ignored.
@@ -1511,7 +1527,7 @@ namespace MWMechanics
                 // he will attack the player only if we will force him (e.g. via StartCombat console command)
                 bool peaceful = false;
                 std::string script = target.getClass().getScript(target);
-                if (!script.empty() && target.getRefData().getLocals().hasVar(script, "onpchitme") && attacker == getPlayer())
+                if (!script.empty() && target.getRefData().getLocals().hasVar(script, "onpchitme") && attacker == player)
                 {
                     int fight = std::max(0, target.getClass().getCreatureStats(target).getAiSetting(CreatureStats::AI_Fight).getModified());
                     peaceful = (fight == 0);
@@ -1527,7 +1543,7 @@ namespace MWMechanics
 
     bool MechanicsManager::canCommitCrimeAgainst(const MWWorld::Ptr &target, const MWWorld::Ptr &attacker)
     {
-        MWMechanics::AiSequence seq = target.getClass().getCreatureStats(target).getAiSequence();
+        const MWMechanics::AiSequence& seq = target.getClass().getCreatureStats(target).getAiSequence();
         return target.getClass().isNpc() && !attacker.isEmpty() && !seq.isInCombat(attacker)
                 && !isAggressive(target, attacker) && !seq.isEngagedWithActor()
                 && !target.getClass().getCreatureStats(target).getAiSequence().hasPackage(AiPackage::TypeIdPursue);
@@ -1580,9 +1596,7 @@ namespace MWMechanics
             return false;
 
         float sneakTerm = 0;
-        if (ptr.getClass().getCreatureStats(ptr).getStance(CreatureStats::Stance_Sneak)
-                && !MWBase::Environment::get().getWorld()->isSwimming(ptr)
-                && MWBase::Environment::get().getWorld()->isOnGround(ptr))
+        if (isSneaking(ptr))
         {
             static float fSneakSkillMult = store.find("fSneakSkillMult")->mValue.getFloat();
             static float fSneakBootMult = store.find("fSneakBootMult")->mValue.getFloat();
@@ -1590,7 +1604,7 @@ namespace MWMechanics
             int agility = stats.getAttribute(ESM::Attribute::Agility).getModified();
             int luck = stats.getAttribute(ESM::Attribute::Luck).getModified();
             float bootWeight = 0;
-            if (ptr.getClass().isNpc())
+            if (ptr.getClass().isNpc() && MWBase::Environment::get().getWorld()->isOnGround(ptr))
             {
                 const MWWorld::InventoryStore& inv = ptr.getClass().getInventoryStore(ptr);
                 MWWorld::ConstContainerStoreIterator it = inv.getSlot(MWWorld::InventoryStore::Slot_Boots);
@@ -1641,18 +1655,28 @@ namespace MWMechanics
 
     void MechanicsManager::startCombat(const MWWorld::Ptr &ptr, const MWWorld::Ptr &target)
     {
-        MWMechanics::AiSequence& aiSequence = ptr.getClass().getCreatureStats(ptr).getAiSequence();
+        CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
 
-        if (aiSequence.isInCombat(target))
+        // Don't add duplicate packages nor add packages to dead actors.
+        if (stats.isDead() || stats.getAiSequence().isInCombat(target))
             return;
 
-        aiSequence.stack(MWMechanics::AiCombat(target), ptr);
+        // The target is somehow the same as the actor. Early-out.
+        if (ptr == target)
+        {
+            // We don't care about dialogue filters since the target is invalid.
+            // We still want to play the combat taunt.
+            MWBase::Environment::get().getDialogueManager()->say(ptr, "attack");
+            return;
+        }
+
+        stats.getAiSequence().stack(MWMechanics::AiCombat(target), ptr);
         if (target == getPlayer())
         {
             // if guard starts combat with player, guards pursuing player should do the same
             if (ptr.getClass().isClass(ptr, "Guard"))
             {
-                ptr.getClass().getCreatureStats(ptr).setHitAttemptActorId(target.getClass().getCreatureStats(target).getActorId()); // Stops guard from ending combat if player is unreachable
+                stats.setHitAttemptActorId(target.getClass().getCreatureStats(target).getActorId()); // Stops guard from ending combat if player is unreachable
                 for (Actors::PtrActorMap::const_iterator iter = mActors.begin(); iter != mActors.end(); ++iter)
                 {
                     if (iter->first.getClass().isClass(iter->first, "Guard"))
@@ -1670,8 +1694,7 @@ namespace MWMechanics
         }
 
         // Must be done after the target is set up, so that CreatureTargetted dialogue filter works properly
-        if (ptr.getClass().isNpc() && !ptr.getClass().getCreatureStats(ptr).isDead())
-            MWBase::Environment::get().getDialogueManager()->say(ptr, "attack");
+        MWBase::Environment::get().getDialogueManager()->say(ptr, "attack");
     }
 
     void MechanicsManager::getObjectsInRange(const osg::Vec3f &position, float radius, std::vector<MWWorld::Ptr> &objects)
@@ -1770,8 +1793,8 @@ namespace MWMechanics
         if (ptr.getClass().isNpc())
             disposition = getDerivedDisposition(ptr, true);
 
-        int fight = std::max(0, ptr.getClass().getCreatureStats(ptr).getAiSetting(CreatureStats::AI_Fight).getModified()
-                + static_cast<int>(getFightDistanceBias(ptr, target) + getFightDispositionBias(static_cast<float>(disposition))));
+        int fight = ptr.getClass().getCreatureStats(ptr).getAiSetting(CreatureStats::AI_Fight).getModified()
+                + static_cast<int>(getFightDistanceBias(ptr, target) + getFightDispositionBias(static_cast<float>(disposition)));
 
         if (ptr.getClass().isNpc() && target.getClass().isNpc())
         {
@@ -1787,12 +1810,14 @@ namespace MWMechanics
         return (fight >= 100);
     }
 
-    void MechanicsManager::keepPlayerAlive()
+    void MechanicsManager::resurrect(const MWWorld::Ptr &ptr)
     {
-        MWWorld::Ptr player = getPlayer();
-        CreatureStats& stats = player.getClass().getCreatureStats(player);
+        CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
         if (stats.isDead())
+        {
             stats.resurrect();
+            mActors.resurrect(ptr);
+        }
     }
 
     bool MechanicsManager::isCastingSpell(const MWWorld::Ptr &ptr) const
@@ -1871,23 +1896,25 @@ namespace MWMechanics
             windowManager->setWerewolfOverlay(werewolf);
 
             // Witnesses of the player's transformation will make them a globally known werewolf
-            std::vector<MWWorld::Ptr> closeActors;
+            std::vector<MWWorld::Ptr> neighbors;
             const MWWorld::Store<ESM::GameSetting>& gmst = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>();
-            getActorsInRange(actor.getRefData().getPosition().asVec3(), gmst.find("fAlarmRadius")->mValue.getFloat(), closeActors);
+            getActorsInRange(actor.getRefData().getPosition().asVec3(), gmst.find("fAlarmRadius")->mValue.getFloat(), neighbors);
 
             bool detected = false, reported = false;
-            for (std::vector<MWWorld::Ptr>::const_iterator it = closeActors.begin(); it != closeActors.end(); ++it)
+            for (const MWWorld::Ptr& neighbor : neighbors)
             {
-                if (*it == actor)
+                if (neighbor == actor || !neighbor.getClass().isNpc())
                     continue;
 
-                if (!it->getClass().isNpc())
-                    continue;
-
-                if (MWBase::Environment::get().getWorld()->getLOS(*it, actor) && awarenessCheck(actor, *it))
+                if (MWBase::Environment::get().getWorld()->getLOS(neighbor, actor) && awarenessCheck(actor, neighbor))
+                {
                     detected = true;
-                if (it->getClass().getCreatureStats(*it).getAiSetting(MWMechanics::CreatureStats::AI_Alarm).getModified() > 0)
-                    reported = true;
+                    if (neighbor.getClass().getCreatureStats(neighbor).getAiSetting(MWMechanics::CreatureStats::AI_Alarm).getModified() > 0)
+                    {
+                        reported = true;
+                        break;
+                    }
+                }
             }
 
             if (detected)
@@ -1899,7 +1926,6 @@ namespace MWMechanics
                 {
                     npcStats.setBounty(npcStats.getBounty()+
                                        gmst.find("iWereWolfBounty")->mValue.getInteger());
-                    windowManager->messageBox("#{sCrimeMessage}");
                 }
             }
         }

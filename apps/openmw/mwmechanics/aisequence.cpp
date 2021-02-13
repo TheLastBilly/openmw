@@ -5,7 +5,6 @@
 #include <components/debug/debuglog.hpp>
 #include <components/esm/aisequence.hpp>
 
-#include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
 #include "aipackage.hpp"
@@ -29,6 +28,10 @@ void AiSequence::copy (const AiSequence& sequence)
     for (std::list<AiPackage *>::const_iterator iter (sequence.mPackages.begin());
         iter!=sequence.mPackages.end(); ++iter)
         mPackages.push_back ((*iter)->clone());
+
+    // We need to keep an AiWander storage, if present - it has a state machine.
+    // Not sure about another temporary storages
+    sequence.mAiState.copy<AiWanderStorage>(mAiState);
 }
 
 AiSequence::AiSequence() : mDone (false), mRepeat(false), mLastAiPackage(-1) {}
@@ -199,7 +202,7 @@ bool isActualAiPackage(int packageTypeId)
             packageTypeId <= AiPackage::TypeIdActivate);
 }
 
-void AiSequence::execute (const MWWorld::Ptr& actor, CharacterController& characterController, float duration)
+void AiSequence::execute (const MWWorld::Ptr& actor, CharacterController& characterController, float duration, bool outOfRange)
 {
     if(actor != getPlayer())
     {
@@ -210,6 +213,9 @@ void AiSequence::execute (const MWWorld::Ptr& actor, CharacterController& charac
         }
 
         MWMechanics::AiPackage* package = mPackages.front();
+        if (!package->alwaysActive() && outOfRange)
+            return;
+
         int packageTypeId = package->getTypeId();
         // workaround ai packages not being handled as in the vanilla engine
         if (isActualAiPackage(packageTypeId))
@@ -389,6 +395,11 @@ void AiSequence::stack (const AiPackage& package, const MWWorld::Ptr& actor, boo
     }
 }
 
+bool MWMechanics::AiSequence::isEmpty() const
+{
+    return mPackages.empty();
+}
+
 AiPackage* MWMechanics::AiSequence::getActivePackage()
 {
     if(mPackages.empty())
@@ -470,7 +481,7 @@ void AiSequence::readState(const ESM::AiSequence::AiSequence &sequence)
     for (std::vector<ESM::AiSequence::AiPackageContainer>::const_iterator it = sequence.mPackages.begin();
          it != sequence.mPackages.end(); ++it)
     {
-        std::unique_ptr<MWMechanics::AiPackage> package (nullptr);
+        std::unique_ptr<MWMechanics::AiPackage> package;
         switch (it->mType)
         {
         case ESM::AiSequence::Ai_Wander:

@@ -1,13 +1,9 @@
 #include "itemmodel.hpp"
 
-#include <set>
-
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
-#include "../mwworld/store.hpp"
 #include "../mwworld/esmstore.hpp"
 
-#include "../mwbase/world.hpp"
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 
@@ -120,9 +116,9 @@ namespace MWGui
         return mSourceModel->allowedToUseItems();
     }
 
-    MWWorld::Ptr ProxyItemModel::copyItem (const ItemStack& item, size_t count, bool setNewOwner)
+    MWWorld::Ptr ProxyItemModel::copyItem (const ItemStack& item, size_t count, bool allowAutoEquip)
     {
-        return mSourceModel->copyItem (item, count, setNewOwner);
+        return mSourceModel->copyItem (item, count, allowAutoEquip);
     }
 
     void ProxyItemModel::removeItem (const ItemStack& item, size_t count)

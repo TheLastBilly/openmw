@@ -2,8 +2,42 @@
 
 #include <components/crashcatcher/crashcatcher.hpp>
 
+#ifdef _WIN32
+#   undef WIN32_LEAN_AND_MEAN
+#   define WIN32_LEAN_AND_MEAN
+#   include <windows.h>
+#endif
+
 namespace Debug
 {
+#ifdef _WIN32
+    bool attachParentConsole()
+    {
+        if (GetConsoleWindow() != nullptr)
+            return true;
+
+        if (AttachConsole(ATTACH_PARENT_PROCESS))
+        {
+            fflush(stdout);
+            fflush(stderr);
+            std::cout.flush();
+            std::cerr.flush();
+
+            // this looks dubious but is really the right way
+            _wfreopen(L"CON", L"w", stdout);
+            _wfreopen(L"CON", L"w", stderr);
+            _wfreopen(L"CON", L"r", stdin);
+            freopen("CON", "w", stdout);
+            freopen("CON", "w", stderr);
+            freopen("CON", "r", stdin);
+
+            return true;
+        }
+
+        return false;
+    }
+#endif
+
     std::streamsize DebugOutputBase::write(const char *str, std::streamsize size)
     {
         // Skip debug level marker
@@ -42,6 +76,8 @@ namespace Debug
                 CurrentDebugLevel = Info;
             else if (value == "VERBOSE")
                 CurrentDebugLevel = Verbose;
+            else if (value == "DEBUG")
+                CurrentDebugLevel = Debug;
 
             return;
         }
@@ -60,9 +96,13 @@ int wrapApplication(int (*innerApplication)(int argc, char *argv[]), int argc, c
     std::streambuf* cout_rdbuf = std::cout.rdbuf ();
     std::streambuf* cerr_rdbuf = std::cerr.rdbuf ();
 
-#if !(defined(_WIN32) && defined(_DEBUG))
+#if defined(_WIN32) && defined(_DEBUG)
+    boost::iostreams::stream_buffer<Debug::DebugOutput> sb;
+#else
     boost::iostreams::stream_buffer<Debug::Tee> coutsb;
     boost::iostreams::stream_buffer<Debug::Tee> cerrsb;
+    std::ostream oldcout(cout_rdbuf);
+    std::ostream oldcerr(cerr_rdbuf);
 #endif
 
     const std::string logName = Misc::StringUtils::lowerCase(appName) + ".log";
@@ -76,7 +116,6 @@ int wrapApplication(int (*innerApplication)(int argc, char *argv[]), int argc, c
 
 #if defined(_WIN32) && defined(_DEBUG)
         // Redirect cout and cerr to VS debug output when running in debug mode
-        boost::iostreams::stream_buffer<Debug::DebugOutput> sb;
         sb.open(Debug::DebugOutput());
         std::cout.rdbuf (&sb);
         std::cerr.rdbuf (&sb);
@@ -84,8 +123,6 @@ int wrapApplication(int (*innerApplication)(int argc, char *argv[]), int argc, c
         // Redirect cout and cerr to the log file
         logfile.open (boost::filesystem::path(cfgMgr.getLogPath() / logName));
 
-        std::ostream oldcout(cout_rdbuf);
-        std::ostream oldcerr(cerr_rdbuf);
         coutsb.open (Debug::Tee(logfile, oldcout));
         cerrsb.open (Debug::Tee(logfile, oldcerr));
 

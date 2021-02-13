@@ -11,7 +11,6 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
-#include "class.hpp"
 #include "esmstore.hpp"
 #include "containerstore.hpp"
 #include "cellstore.hpp"
@@ -151,16 +150,29 @@ MWWorld::CellStore *MWWorld::Cells::getInterior (const std::string& name)
     return &result->second;
 }
 
-void MWWorld::Cells::rest ()
+void MWWorld::Cells::rest (double hours)
 {
     for (auto &interior : mInteriors)
     {
-        interior.second.rest();
+        interior.second.rest(hours);
     }
 
     for (auto &exterior : mExteriors)
     {
-        exterior.second.rest();
+        exterior.second.rest(hours);
+    }
+}
+
+void MWWorld::Cells::recharge (float duration)
+{
+    for (auto &interior : mInteriors)
+    {
+        interior.second.recharge(duration);
+    }
+
+    for (auto &exterior : mExteriors)
+    {
+        exterior.second.recharge(duration);
     }
 }
 

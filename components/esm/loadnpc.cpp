@@ -18,7 +18,8 @@ namespace ESM
         mInventory.mList.clear();
         mTransport.mList.clear();
         mAiPackage.mList.clear();
-        mHasAI = false;
+        mAiData.blank();
+        mAiData.mHello = mAiData.mFight = mAiData.mFlee = 30;
 
         bool hasName = false;
         bool hasNpdt = false;
@@ -85,7 +86,10 @@ namespace ESM
                     break;
                 case ESM::FourCC<'F','L','A','G'>::value:
                     hasFlags = true;
-                    esm.getHT(mFlags);
+                    int flags;
+                    esm.getHT(flags);
+                    mFlags = flags & 0xFF;
+                    mBloodType = ((flags >> 8) & 0xFF) >> 2;
                     break;
                 case ESM::FourCC<'N','P','C','S'>::value:
                     mSpells.add(esm);
@@ -95,7 +99,6 @@ namespace ESM
                     break;
                 case ESM::FourCC<'A','I','D','T'>::value:
                     esm.getHExact(&mAiData, sizeof(mAiData));
-                    mHasAI= true;
                     break;
                 case ESM::FourCC<'D','O','D','T'>::value:
                 case ESM::FourCC<'D','N','A','M'>::value:
@@ -160,18 +163,11 @@ namespace ESM
             esm.writeHNT("NPDT", npdt12, 12);
         }
 
-        esm.writeHNT("FLAG", mFlags);
+        esm.writeHNT("FLAG", ((mBloodType << 10) + mFlags));
 
         mInventory.save(esm);
         mSpells.save(esm);
-        if (mAiData.mHello != 0
-            || mAiData.mFight != 0
-            || mAiData.mFlee != 0
-            || mAiData.mAlarm != 0
-            || mAiData.mServices != 0)
-        {
-            esm.writeHNT("AIDT", mAiData, sizeof(mAiData));
-        }
+        esm.writeHNT("AIDT", mAiData, sizeof(mAiData));
 
         mTransport.save(esm);
 
@@ -193,11 +189,12 @@ namespace ESM
     {
         mNpdtType = NPC_DEFAULT;
         blankNpdt();
+        mBloodType = 0;
         mFlags = 0;
         mInventory.mList.clear();
         mSpells.mList.clear();
         mAiData.blank();
-        mHasAI = false;
+        mAiData.mHello = mAiData.mFight = mAiData.mFlee = 30;
         mTransport.mList.clear();
         mAiPackage.mList.clear();
         mName.clear();
@@ -219,9 +216,9 @@ namespace ESM
         mNpdt.mReputation = 0;
         mNpdt.mHealth = mNpdt.mMana = mNpdt.mFatigue = 0;
         mNpdt.mDisposition = 0;
-        mNpdt.mFactionID = 0;
+        mNpdt.mUnknown1 = 0;
         mNpdt.mRank = 0;
-        mNpdt.mUnknown = 0;
+        mNpdt.mUnknown2 = 0;
         mNpdt.mGold = 0;
     }
 

@@ -4,7 +4,6 @@
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
-#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/soundmanager.hpp"
 
 #include "../mwmechanics/creaturestats.hpp"
@@ -90,16 +89,6 @@ namespace MWClass
 
     bool Actor::isActor() const
     {
-        return true;
-    }
-
-    bool Actor::canBeActivated(const MWWorld::Ptr& ptr) const
-    {
-        MWMechanics::CreatureStats &stats = getCreatureStats(ptr);
-
-        if (stats.getAiSequence().isInCombat() && !stats.isDead())
-            return false;
-
         return true;
     }
 }

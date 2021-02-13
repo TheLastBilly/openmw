@@ -13,9 +13,11 @@
 #include <osg/Material>
 #include <osg/Version>
 
+#include <components/debug/debuglog.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/sceneutil/lightmanager.hpp>
+#include <components/sceneutil/vismask.hpp>
 
 #include "../widget/scenetoolmode.hpp"
 
@@ -24,7 +26,6 @@
 #include "../../model/prefs/shortcuteventhandler.hpp"
 
 #include "lighting.hpp"
-#include "mask.hpp"
 #include "cameracontroller.hpp"
 
 namespace CSVRender
@@ -70,7 +71,7 @@ RenderWidget::RenderWidget(QWidget *parent, Qt::WindowFlags f)
 
     SceneUtil::LightManager* lightMgr = new SceneUtil::LightManager;
     lightMgr->setStartLight(1);
-    lightMgr->setLightingMask(Mask_Lighting);
+    lightMgr->setLightingMask(SceneUtil::Mask_Lighting);
     mRootNode = lightMgr;
 
     mView->getCamera()->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
@@ -87,7 +88,7 @@ RenderWidget::RenderWidget(QWidget *parent, Qt::WindowFlags f)
     // Add ability to signal osg to show its statistics for debugging purposes
     mView->addEventHandler(new osgViewer::StatsHandler);
 
-    mView->getCamera()->setCullMask(~(Mask_UpdateVisitor));
+    mView->getCamera()->setCullMask(~(SceneUtil::Mask_UpdateVisitor));
 
     viewer.addView(mView);
     viewer.setDone(false);
@@ -96,7 +97,22 @@ RenderWidget::RenderWidget(QWidget *parent, Qt::WindowFlags f)
 
 RenderWidget::~RenderWidget()
 {
-    CompositeViewer::get().removeView(mView);
+    try
+    {
+        CompositeViewer::get().removeView(mView);
+
+#if OSG_VERSION_LESS_THAN(3,6,5)
+        // before OSG 3.6.4, the default font was a static object, and if it wasn't attached to the scene when a graphics context was destroyed, it's program wouldn't be released.
+        // 3.6.4 moved it into the object cache, which meant it usually got released, but not here.
+        // 3.6.5 improved cleanup with osgViewer::CompositeViewer::removeView so it more reliably released associated state for objects in the object cache.
+        osg::ref_ptr<osg::GraphicsContext> graphicsContext = mView->getCamera()->getGraphicsContext();
+        osgText::Font::getDefaultFont()->releaseGLObjects(graphicsContext->getState());
+#endif
+    }
+    catch(const std::exception& e)
+    {
+        Log(Debug::Error) << "Error in the destructor: " << e.what();
+    }
 }
 
 void RenderWidget::flagAsModified()
@@ -106,7 +122,7 @@ void RenderWidget::flagAsModified()
 
 void RenderWidget::setVisibilityMask(int mask)
 {
-    mView->getCamera()->setCullMask(mask | Mask_ParticleSystem | Mask_Lighting);
+    mView->getCamera()->setCullMask(mask | SceneUtil::Mask_ParticleSystem | SceneUtil::Mask_Lighting);
 }
 
 osg::Camera *RenderWidget::getCamera()
@@ -187,6 +203,7 @@ SceneWidget::SceneWidget(std::shared_ptr<Resource::ResourceSystem> resourceSyste
     , mResourceSystem(resourceSystem)
     , mLighting(nullptr)
     , mHasDefaultAmbient(false)
+    , mIsExterior(true)
     , mPrevMouseX(0)
     , mPrevMouseY(0)
     , mCamPositionSet(false)
@@ -195,7 +212,7 @@ SceneWidget::SceneWidget(std::shared_ptr<Resource::ResourceSystem> resourceSyste
     mOrbitCamControl = new OrbitCameraController(this);
     mCurrentCamControl = mFreeCamControl;
 
-    mOrbitCamControl->setPickingMask(Mask_Reference | Mask_Terrain);
+    mOrbitCamControl->setPickingMask(SceneUtil::Mask_EditorReference | SceneUtil::Mask_Terrain);
 
     mOrbitCamControl->setConstRoll( CSMPrefs::get()["3D Scene Input"]["navi-orbit-const-roll"].isTrue() );
 
@@ -204,7 +221,7 @@ SceneWidget::SceneWidget(std::shared_ptr<Resource::ResourceSystem> resourceSyste
 
     setLighting(&mLightingDay);
 
-    mResourceSystem->getSceneManager()->setParticleSystemMask(Mask_ParticleSystem);
+    mResourceSystem->getSceneManager()->setParticleSystemMask(SceneUtil::Mask_ParticleSystem);
 
     // Recieve mouse move event even if mouse button is not pressed
     setMouseTracking(true);
@@ -242,7 +259,7 @@ void SceneWidget::setLighting(Lighting *lighting)
         mLighting->deactivate();
 
     mLighting = lighting;
-    mLighting->activate (mRootNode);
+    mLighting->activate (mRootNode, mIsExterior);
 
     osg::Vec4f ambient = mLighting->getAmbientColour(mHasDefaultAmbient ? &mDefaultAmbient : 0);
     setAmbient(ambient);
@@ -307,6 +324,11 @@ void SceneWidget::setDefaultAmbient (const osg::Vec4f& colour)
     setAmbient(mLighting->getAmbientColour(&mDefaultAmbient));
 }
 
+void SceneWidget::setExterior (bool isExterior)
+{
+    mIsExterior = isExterior;
+}
+
 void SceneWidget::mouseMoveEvent (QMouseEvent *event)
 {
     mCurrentCamControl->handleMouseMoveEvent(event->x() - mPrevMouseX, event->y() - mPrevMouseY);
@@ -328,7 +350,7 @@ void SceneWidget::update(double dt)
     }
     else
     {
-        mCurrentCamControl->setup(mRootNode, Mask_Reference | Mask_Terrain, CameraController::WorldUp);
+        mCurrentCamControl->setup(mRootNode, SceneUtil::Mask_EditorReference | SceneUtil::Mask_Terrain, CameraController::WorldUp);
         mCamPositionSet = true;
     }
 }

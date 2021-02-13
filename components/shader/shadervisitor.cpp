@@ -1,20 +1,20 @@
 #include "shadervisitor.hpp"
 
-#include <iostream>
-
-#include <osg/Texture>
-#include <osg/Material>
+#include <osg/AlphaFunc>
+#include <osg/BlendFunc>
 #include <osg/Geometry>
+#include <osg/Material>
+#include <osg/Texture>
 
 #include <osgUtil/TangentSpaceGenerator>
 
-#include <boost/algorithm/string.hpp>
-
 #include <components/debug/debuglog.hpp>
+#include <components/misc/stringops.hpp>
 #include <components/resource/imagemanager.hpp>
 #include <components/vfs/manager.hpp>
 #include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/morphgeometry.hpp>
+#include <components/settings/settings.hpp>
 
 #include "shadermanager.hpp"
 
@@ -23,9 +23,9 @@ namespace Shader
 
     ShaderVisitor::ShaderRequirements::ShaderRequirements()
         : mShaderRequired(false)
-        , mColorMaterial(false)
-        , mVertexColorMode(GL_AMBIENT_AND_DIFFUSE)
+        , mColorMode(0)
         , mMaterialOverridden(false)
+        , mBlendFuncOverridden(false)
         , mNormalHeight(false)
         , mTexStageRequiringTangents(-1)
         , mNode(nullptr)
@@ -40,8 +40,6 @@ namespace Shader
     ShaderVisitor::ShaderVisitor(ShaderManager& shaderManager, Resource::ImageManager& imageManager, const std::string &defaultVsTemplate, const std::string &defaultFsTemplate)
         : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
         , mForceShaders(false)
-        , mClampLighting(true)
-        , mForcePerPixelLighting(false)
         , mAllowedToModifyStateSets(true)
         , mAutoUseNormalMaps(false)
         , mAutoUseSpecularMaps(false)
@@ -56,16 +54,6 @@ namespace Shader
     void ShaderVisitor::setForceShaders(bool force)
     {
         mForceShaders = force;
-    }
-
-    void ShaderVisitor::setClampLighting(bool clamp)
-    {
-        mClampLighting = clamp;
-    }
-
-    void ShaderVisitor::setForcePerPixelLighting(bool force)
-    {
-        mForcePerPixelLighting = force;
     }
 
     void ShaderVisitor::apply(osg::Node& node)
@@ -91,7 +79,7 @@ namespace Shader
         return newStateSet.get();
     }
 
-    const char* defaultTextures[] = { "diffuseMap", "normalMap", "emissiveMap", "darkMap", "detailMap", "envMap", "specularMap", "decalMap" };
+    const char* defaultTextures[] = { "diffuseMap", "normalMap", "emissiveMap", "darkMap", "detailMap", "envMap", "specularMap", "decalMap", "bumpMap" };
     bool isTextureNameRecognized(const std::string& name)
     {
         for (unsigned int i=0; i<sizeof(defaultTextures)/sizeof(defaultTextures[0]); ++i)
@@ -111,6 +99,7 @@ namespace Shader
             const osg::Texture* diffuseMap = nullptr;
             const osg::Texture* normalMap = nullptr;
             const osg::Texture* specularMap = nullptr;
+            const osg::Texture* bumpMap = nullptr;
             for(unsigned int unit=0;unit<texAttributes.size();++unit)
             {
                 const osg::StateAttribute *attr = stateset->getTextureAttribute(unit, osg::StateAttribute::TEXTURE);
@@ -146,6 +135,21 @@ namespace Shader
                                 diffuseMap = texture;
                             else if (texName == "specularMap")
                                 specularMap = texture;
+                            else if (texName == "bumpMap")
+                            {
+                                bumpMap = texture;
+                                mRequirements.back().mShaderRequired = true;
+                                if (!writableStateSet)
+                                    writableStateSet = getWritableStateSet(node);
+                                // Bump maps are off by default as well
+                                writableStateSet->setTextureMode(unit, GL_TEXTURE_2D, osg::StateAttribute::ON);
+                            }
+                            else if (texName == "envMap")
+                            {
+                                static const bool preLightEnv = Settings::Manager::getBool("apply lighting to environment maps", "Shaders");
+                                if (preLightEnv)
+                                    mRequirements.back().mShaderRequired = true;
+                            }
                         }
                         else
                             Log(Debug::Error) << "ShaderVisitor encountered unknown texture " << texture;
@@ -160,7 +164,7 @@ namespace Shader
                 osg::ref_ptr<osg::Image> image;
                 bool normalHeight = false;
                 std::string normalHeightMap = normalMapFileName;
-                boost::replace_last(normalHeightMap, ".", mNormalHeightMapPattern + ".");
+                Misc::StringUtils::replaceLast(normalHeightMap, ".", mNormalHeightMapPattern + ".");
                 if (mImageManager.getVFS()->exists(normalHeightMap))
                 {
                     image = mImageManager.getImage(normalHeightMap);
@@ -168,16 +172,20 @@ namespace Shader
                 }
                 else
                 {
-                    boost::replace_last(normalMapFileName, ".", mNormalMapPattern + ".");
+                    Misc::StringUtils::replaceLast(normalMapFileName, ".", mNormalMapPattern + ".");
                     if (mImageManager.getVFS()->exists(normalMapFileName))
                     {
                         image = mImageManager.getImage(normalMapFileName);
                     }
                 }
+                // Avoid using the auto-detected normal map if it's already being used as a bump map.
+                // It's probably not an actual normal map.
+                bool hasNamesakeBumpMap = image && bumpMap && bumpMap->getImage(0) && image->getFileName() == bumpMap->getImage(0)->getFileName();
 
-                if (image)
+                if (!hasNamesakeBumpMap && image)
                 {
                     osg::ref_ptr<osg::Texture2D> normalMapTex (new osg::Texture2D(image));
+                    normalMapTex->setTextureSize(image->s(), image->t());
                     normalMapTex->setWrap(osg::Texture::WRAP_S, diffuseMap->getWrap(osg::Texture::WRAP_S));
                     normalMapTex->setWrap(osg::Texture::WRAP_T, diffuseMap->getWrap(osg::Texture::WRAP_T));
                     normalMapTex->setFilter(osg::Texture::MIN_FILTER, diffuseMap->getFilter(osg::Texture::MIN_FILTER));
@@ -198,10 +206,12 @@ namespace Shader
             if (mAutoUseSpecularMaps && diffuseMap != nullptr && specularMap == nullptr && diffuseMap->getImage(0))
             {
                 std::string specularMapFileName = diffuseMap->getImage(0)->getFileName();
-                boost::replace_last(specularMapFileName, ".", mSpecularMapPattern + ".");
+                Misc::StringUtils::replaceLast(specularMapFileName, ".", mSpecularMapPattern + ".");
                 if (mImageManager.getVFS()->exists(specularMapFileName))
                 {
-                    osg::ref_ptr<osg::Texture2D> specularMapTex (new osg::Texture2D(mImageManager.getImage(specularMapFileName)));
+                    osg::ref_ptr<osg::Image> image (mImageManager.getImage(specularMapFileName));
+                    osg::ref_ptr<osg::Texture2D> specularMapTex (new osg::Texture2D(image));
+                    specularMapTex->setTextureSize(image->s(), image->t());
                     specularMapTex->setWrap(osg::Texture::WRAP_S, diffuseMap->getWrap(osg::Texture::WRAP_S));
                     specularMapTex->setWrap(osg::Texture::WRAP_T, diffuseMap->getWrap(osg::Texture::WRAP_T));
                     specularMapTex->setFilter(osg::Texture::MIN_FILTER, diffuseMap->getFilter(osg::Texture::MIN_FILTER));
@@ -217,23 +227,78 @@ namespace Shader
                     mRequirements.back().mShaderRequired = true;
                 }
             }
+
+            if (diffuseMap)
+            {
+                if (!writableStateSet)
+                    writableStateSet = getWritableStateSet(node);
+                // We probably shouldn't construct a new version of this each time as Uniforms use pointer comparison for early-out.
+                // Also it should probably belong to the shader manager
+                writableStateSet->addUniform(new osg::Uniform("useDiffuseMapForShadowAlpha", true));
+            }
         }
+
+        bool alphaSettingsChanged = false;
+        bool alphaTestShadows = false;
 
         const osg::StateSet::AttributeList& attributes = stateset->getAttributeList();
         for (osg::StateSet::AttributeList::const_iterator it = attributes.begin(); it != attributes.end(); ++it)
         {
             if (it->first.first == osg::StateAttribute::MATERIAL)
             {
+                // This should probably be moved out of ShaderRequirements and be applied directly now it's a uniform instead of a define
                 if (!mRequirements.back().mMaterialOverridden || it->second.second & osg::StateAttribute::PROTECTED)
                 {
                     if (it->second.second & osg::StateAttribute::OVERRIDE)
                         mRequirements.back().mMaterialOverridden = true;
 
                     const osg::Material* mat = static_cast<const osg::Material*>(it->second.first.get());
-                    mRequirements.back().mColorMaterial = (mat->getColorMode() != osg::Material::OFF);
-                    mRequirements.back().mVertexColorMode = mat->getColorMode();
+
+                    if (!writableStateSet)
+                        writableStateSet = getWritableStateSet(node);
+
+                    int colorMode;
+                    switch (mat->getColorMode())
+                    {
+                    case osg::Material::OFF:
+                        colorMode = 0;
+                        break;
+                    case GL_AMBIENT:
+                        colorMode = 3;
+                        break;
+                    default:
+                    case GL_AMBIENT_AND_DIFFUSE:
+                        colorMode = 2;
+                        break;
+                    case GL_EMISSION:
+                        colorMode = 1;
+                        break;
+                    }
+
+                    mRequirements.back().mColorMode = colorMode;
                 }
             }
+            else if (it->first.first == osg::StateAttribute::BLENDFUNC)
+            {
+                if (!mRequirements.back().mBlendFuncOverridden || it->second.second & osg::StateAttribute::PROTECTED)
+                {
+                    if (it->second.second & osg::StateAttribute::OVERRIDE)
+                        mRequirements.back().mBlendFuncOverridden = true;
+
+                    const osg::BlendFunc* blend = static_cast<const osg::BlendFunc*>(it->second.first.get());
+                    if (blend->getSource() == osg::BlendFunc::SRC_ALPHA || blend->getSource() == osg::BlendFunc::SRC_COLOR)
+                        alphaTestShadows = true;
+                    alphaSettingsChanged = true;
+                }
+            }
+            // Eventually, move alpha testing to discard in shader adn remove deprecated state here
+        }
+        // we don't need to check for glEnable/glDisable of blending as we always set it at the same time
+        if (alphaSettingsChanged)
+        {
+            if (!writableStateSet)
+                writableStateSet = getWritableStateSet(node);
+            writableStateSet->addUniform(alphaTestShadows ? mShaderManager.getShadowMapAlphaTestEnableUniform() : mShaderManager.getShadowMapAlphaTestDisableUniform());
         }
     }
 
@@ -272,29 +337,9 @@ namespace Shader
             defineMap[texIt->second + std::string("UV")] = std::to_string(texIt->first);
         }
 
-        if (!reqs.mColorMaterial)
-            defineMap["colorMode"] = "0";
-        else
-        {
-            switch (reqs.mVertexColorMode)
-            {
-            case GL_AMBIENT:
-                defineMap["colorMode"] = "3";
-                break;
-            default:
-            case GL_AMBIENT_AND_DIFFUSE:
-                defineMap["colorMode"] = "2";
-                break;
-            case GL_EMISSION:
-                defineMap["colorMode"] = "1";
-                break;
-            }
-        }
-
-        defineMap["forcePPL"] = mForcePerPixelLighting ? "1" : "0";
-        defineMap["clamp"] = mClampLighting ? "1" : "0";
-
         defineMap["parallax"] = reqs.mNormalHeight ? "1" : "0";
+
+        writableStateSet->addUniform(new osg::Uniform("colorMode", reqs.mColorMode));
 
         osg::ref_ptr<osg::Shader> vertexShader (mShaderManager.getShader(mDefaultVsTemplate, defineMap, osg::Shader::VERTEX));
         osg::ref_ptr<osg::Shader> fragmentShader (mShaderManager.getShader(mDefaultFsTemplate, defineMap, osg::Shader::FRAGMENT));

@@ -72,18 +72,19 @@ public:
     int activeCount;
     std::vector<Particle> particles;
 
-    ExtraPtr affectors;
-    ExtraPtr colliders;
+    NiParticleModifierPtr affectors;
+    NiParticleModifierPtr colliders;
 
     void read(NIFStream *nif);
     void post(NIFFile *nif);
 };
-typedef NiParticleSystemController NiBSPArrayController;
+using NiBSPArrayController = NiParticleSystemController;
 
 class NiMaterialColorController : public Controller
 {
 public:
     NiPosDataPtr data;
+    unsigned int targetColor;
 
     void read(NIFStream *nif);
     void post(NIFFile *nif);
@@ -112,6 +113,7 @@ class NiUVController : public Controller
 {
 public:
     NiUVDataPtr data;
+    unsigned int uvSet;
 
     void read(NIFStream *nif);
     void post(NIFFile *nif);
@@ -127,6 +129,15 @@ public:
 };
 
 class NiAlphaController : public Controller
+{
+public:
+    NiFloatDataPtr data;
+
+    void read(NIFStream *nif);
+    void post(NIFFile *nif);
+};
+
+class NiRollController : public Controller
 {
 public:
     NiFloatDataPtr data;

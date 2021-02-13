@@ -40,8 +40,8 @@ namespace MWGui
         void setIcon (const MWWorld::Ptr& ptr);
         void setFrame (const std::string& frame, const MyGUI::IntCoord& coord);
 
-    private:
-        virtual void initialiseOverride();
+    protected:
+        void initialiseOverride() final;
 
         MyGUI::ImageBox* mItem;
         MyGUI::ImageBox* mItemShadow;
@@ -50,6 +50,16 @@ namespace MWGui
 
         std::string mCurrentIcon;
         std::string mCurrentFrame;
+
+        static std::map<std::string, float> mScales;
+    };
+
+    class SpellWidget : public ItemWidget
+    {
+    MYGUI_RTTI_DERIVED(SpellWidget)
+    public:
+
+        void setSpellIcon (const std::string& icon);
     };
 
 }

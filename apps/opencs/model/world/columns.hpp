@@ -225,12 +225,10 @@ namespace CSMWorld
             ColumnId_SoundChance = 210,
 
             ColumnId_FactionReactions = 211,
-            //ColumnId_FactionID = 212,
             ColumnId_FactionReaction = 213,
 
             ColumnId_EffectList = 214,
             ColumnId_EffectId = 215,
-            //ColumnId_EffectAttribute = 216,
             ColumnId_EffectRange = 217,
             ColumnId_EffectArea = 218,
 
@@ -275,8 +273,7 @@ namespace CSMWorld
             ColumnId_UChar = 250,
             ColumnId_NpcMisc = 251,
             ColumnId_Level = 252,
-            ColumnId_NpcFactionID = 253,
-            ColumnId_GenderNpc = 254,
+            // unused
             ColumnId_Mana = 255,
             ColumnId_Fatigue = 256,
             ColumnId_NpcDisposition = 257,
@@ -338,6 +335,14 @@ namespace CSMWorld
             ColumnId_LandColoursIndex = 304,
             ColumnId_LandTexturesIndex = 305,
 
+            ColumnId_RankName = 306,
+            ColumnId_FactionRanks = 307,
+            ColumnId_FactionPrimSkill = 308,
+            ColumnId_FactionFavSkill = 309,
+            ColumnId_FactionRep = 310,
+            ColumnId_FactionAttrib1 = 311,
+            ColumnId_FactionAttrib2 = 312,
+
             // Allocated to a separate value range, so we don't get a collision should we ever need
             // to extend the number of use values.
             ColumnId_UseValue1 = 0x10000,
@@ -382,7 +387,7 @@ namespace CSMWorld
 
         bool hasEnums (ColumnId column);
 
-        std::vector<std::string> getEnums (ColumnId column);
+        std::vector<std::pair<int,std::string>> getEnums (ColumnId column);
         ///< Returns an empty vector, if \a column isn't an enum type column.
     }
 }

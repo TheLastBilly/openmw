@@ -5,6 +5,7 @@
 #include <osg/Group>
 
 #include "chunkmanager.hpp"
+#include "compositemaprenderer.hpp"
 
 namespace Terrain
 {
@@ -14,11 +15,11 @@ class MyView : public View
 public:
     osg::ref_ptr<osg::Node> mLoaded;
 
-    virtual void reset(unsigned int frame) {}
+    virtual void reset() {}
 };
 
-TerrainGrid::TerrainGrid(osg::Group* parent, osg::Group* compileRoot, Resource::ResourceSystem* resourceSystem, Storage* storage, int nodeMask, int preCompileMask, int borderMask)
-    : Terrain::World(parent, compileRoot, resourceSystem, storage, nodeMask, preCompileMask, borderMask)
+TerrainGrid::TerrainGrid(osg::Group* parent, osg::Group* compileRoot, Resource::ResourceSystem* resourceSystem, Storage* storage)
+    : Terrain::World(parent, compileRoot, resourceSystem, storage)
     , mNumSplits(4)
 {
 }
@@ -27,7 +28,7 @@ TerrainGrid::~TerrainGrid()
 {
     while (!mGrid.empty())
     {
-        unloadCell(mGrid.begin()->first.first, mGrid.begin()->first.second);
+        TerrainGrid::unloadCell(mGrid.begin()->first.first, mGrid.begin()->first.second);
     }
 }
 
@@ -60,7 +61,6 @@ osg::ref_ptr<osg::Node> TerrainGrid::buildTerrain (osg::Group* parent, float chu
             return nullptr;
         if (parent)
             parent->addChild(node);
-
         return node;
     }
 }
@@ -84,7 +84,7 @@ void TerrainGrid::loadCell(int x, int y)
 
 void TerrainGrid::unloadCell(int x, int y)
 {
-    MWRender::CellBorder::CellGrid::iterator it = mGrid.find(std::make_pair(x,y));
+    CellBorder::CellGrid::iterator it = mGrid.find(std::make_pair(x,y));
     if (it == mGrid.end())
         return;
 

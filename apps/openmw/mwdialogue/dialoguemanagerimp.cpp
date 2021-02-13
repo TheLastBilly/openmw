@@ -1,9 +1,6 @@
 #include "dialoguemanagerimp.hpp"
 
-#include <cctype>
-#include <cstdlib>
 #include <algorithm>
-#include <iterator>
 #include <list>
 
 #include <components/debug/debuglog.hpp>
@@ -53,8 +50,7 @@ namespace MWDialogue
     DialogueManager::DialogueManager (const Compiler::Extensions& extensions, Translation::Storage& translationDataStorage) :
       mTranslationDataStorage(translationDataStorage)
       , mCompilerContext (MWScript::CompilerContext::Type_Dialogue)
-      , mErrorStream(std::cout.rdbuf())
-      , mErrorHandler(mErrorStream)
+      , mErrorHandler()
       , mTalkedTo(false)
       , mTemporaryDispositionChange(0.f)
       , mPermanentDispositionChange(0.f)
@@ -96,9 +92,6 @@ namespace MWDialogue
 
                 topicId = mTranslationDataStorage.topicStandardForm(topicId);
             }
-
-            if (tok->isImplicitKeyword() && mTranslationDataStorage.hasTranslation())
-                continue;
 
             if (mActorKnownTopics.count( topicId ))
                 mKnownTopics.insert( topicId );
@@ -210,8 +203,7 @@ namespace MWDialogue
 
         if (!success)
         {
-            Log(Debug::Warning)
-                << "Warning: compiling failed (dialogue script)\n" << cmd << "\n\n";
+            Log(Debug::Error) << "Error: compiling failed (dialogue script): \n" << cmd << "\n";
         }
 
         return success;
@@ -548,7 +540,7 @@ namespace MWDialogue
     void DialogueManager::say(const MWWorld::Ptr &actor, const std::string &topic)
     {
         MWBase::SoundManager *sndMgr = MWBase::Environment::get().getSoundManager();
-        if(!sndMgr->sayDone(actor))
+        if(sndMgr->sayActive(actor))
         {
             // Actor is already saying something.
             return;

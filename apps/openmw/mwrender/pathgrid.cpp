@@ -6,20 +6,17 @@
 #include <osg/PositionAttitudeTransform>
 #include <osg/Group>
 
-#include <components/esm/loadstat.hpp>
 #include <components/esm/loadpgrd.hpp>
 #include <components/sceneutil/pathgridutil.hpp>
+#include <components/sceneutil/vismask.hpp>
 
 #include "../mwbase/world.hpp" // these includes can be removed once the static-hack is gone
 #include "../mwbase/environment.hpp"
 
-#include "../mwworld/ptr.hpp"
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwmechanics/pathfinding.hpp"
 #include "../mwmechanics/coordinateconverter.hpp"
-
-#include "vismask.hpp"
 
 namespace MWRender
 {
@@ -75,20 +72,20 @@ void Pathgrid::togglePathgrid()
     {
         // add path grid meshes to already loaded cells
         mPathGridRoot = new osg::Group;
-        mPathGridRoot->setNodeMask(Mask_Debug);
+        mPathGridRoot->setNodeMask(SceneUtil::Mask_Pathgrid);
         mRootNode->addChild(mPathGridRoot);
 
-        for(CellList::iterator it = mActiveCells.begin(); it != mActiveCells.end(); ++it)
+        for(const MWWorld::CellStore* cell : mActiveCells)
         {
-            enableCellPathgrid(*it);
+            enableCellPathgrid(cell);
         }
     }
     else
     {
         // remove path grid meshes from already loaded cells
-        for(CellList::iterator it = mActiveCells.begin(); it != mActiveCells.end(); ++it)
+        for(const MWWorld::CellStore* cell : mActiveCells)
         {
-            disableCellPathgrid(*it);
+            disableCellPathgrid(cell);
         }
 
         if (mPathGridRoot)

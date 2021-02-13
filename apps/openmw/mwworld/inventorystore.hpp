@@ -34,6 +34,7 @@ namespace MWWorld
          */
         virtual void permanentEffectAdded (const ESM::MagicEffect *magicEffect, bool isNew) {}
 
+        virtual ~InventoryStoreListener() = default;
     };
 
     ///< \brief Variant of the ContainerStore for NPCs
@@ -69,7 +70,7 @@ namespace MWWorld
 
             MWMechanics::MagicEffects mMagicEffects;
 
-            InventoryStoreListener* mListener;
+            InventoryStoreListener* mInventoryListener;
 
             // Enables updates of magic effects and actor model whenever items are equipped or unequipped.
             // This is disabled during autoequip to avoid excessive updates
@@ -94,28 +95,24 @@ namespace MWWorld
 
             TSlots mSlots;
 
+            void autoEquipWeapon(const MWWorld::Ptr& actor, TSlots& slots_);
+            void autoEquipArmor(const MWWorld::Ptr& actor, TSlots& slots_);
+            void autoEquipShield(const MWWorld::Ptr& actor, TSlots& slots_);
+
             // selected magic item (for using enchantments of type "Cast once" or "Cast when used")
             ContainerStoreIterator mSelectedEnchantItem;
-
-            // (item, max charge)
-            typedef std::vector<std::pair<ContainerStoreIterator, float> > TRechargingItems;
-            TRechargingItems mRechargingItems;
-
-            bool mRechargingItemsUpToDate;
 
             void copySlots (const InventoryStore& store);
 
             void initSlots (TSlots& slots_);
 
             void updateMagicEffects(const Ptr& actor);
-            void updateRechargingItems();
 
             void fireEquipmentChangedEvent(const Ptr& actor);
 
             virtual void storeEquipmentState (const MWWorld::LiveCellRefBase& ref, int index, ESM::InventoryState& inventory) const;
             virtual void readEquipmentState (const MWWorld::ContainerStoreIterator& iter, int index, const ESM::InventoryState& inventory);
 
-            bool canActorAutoEquip(const MWWorld::Ptr& actor, const MWWorld::Ptr& item);
             ContainerStoreIterator findSlot (int slot) const;
 
         public:
@@ -128,16 +125,14 @@ namespace MWWorld
 
             virtual InventoryStore* clone() { return new InventoryStore(*this); }
 
-            virtual ContainerStoreIterator add (const Ptr& itemPtr, int count, const Ptr& actorPtr, bool setOwner=false);
+            virtual ContainerStoreIterator add (const Ptr& itemPtr, int count, const Ptr& actorPtr, bool allowAutoEquip = true);
             ///< Add the item pointed to by \a ptr to this container. (Stacks automatically if needed)
-            /// Auto-equip items if specific conditions are fulfilled (see the implementation).
+            /// Auto-equip items if specific conditions are fulfilled and allowAutoEquip is true (see the implementation).
             ///
             /// \note The item pointed to is not required to exist beyond this function call.
             ///
             /// \attention Do not add items to an existing stack by increasing the count instead of
             /// calling this function!
-            ///
-            /// @param setOwner Set the owner of the added item to \a actorPtr?
             ///
             /// @return if stacking happened, return iterator to the item that was stacked against, otherwise iterator to the newly inserted item.
 
@@ -164,15 +159,8 @@ namespace MWWorld
             void autoEquip (const MWWorld::Ptr& actor);
             ///< Auto equip items according to stats and item value.
 
-            void autoEquipShield(const MWWorld::Ptr& actor);
-            ///< Auto-equip the shield with most health.
-
             const MWMechanics::MagicEffects& getMagicEffects() const;
             ///< Return magic effects from worn items.
-
-            virtual void flagAsModified();
-            ///< \attention This function is internal to the world model and should not be called from
-            /// outside.
 
             virtual bool stacks (const ConstPtr& ptr1, const ConstPtr& ptr2) const;
             ///< @return true if the two specified objects can stack with each other
@@ -186,7 +174,7 @@ namespace MWWorld
             ///
             /// @return the number of items actually removed
 
-            ContainerStoreIterator unequipSlot(int slot, const Ptr& actor);
+            ContainerStoreIterator unequipSlot(int slot, const Ptr& actor, bool fireEvent=true);
             ///< Unequip \a slot.
             ///
             /// @return an iterator to the item that was previously in the slot
@@ -214,9 +202,6 @@ namespace MWWorld
             InventoryStoreListener* getInvListener();
 
             void visitEffectSources (MWMechanics::EffectSourceVisitor& visitor);
-
-            void rechargeItems (float duration);
-            ///< Restore charge on enchanted items. Note this should only be done for the player.
 
             void purgeEffect (short effectId);
             ///< Remove a magic effect

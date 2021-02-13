@@ -2,14 +2,11 @@
 
 #include <iomanip>
 
-#include <boost/format.hpp>
-
 #include <components/esm/loadclas.hpp>
 #include <components/esm/loadgmst.hpp>
 #include <components/esm/loadfact.hpp>
 #include <components/esm/npcstats.hpp>
 
-#include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 
 #include "../mwbase/environment.hpp"
@@ -69,6 +66,16 @@ const std::map<std::string, int>& MWMechanics::NpcStats::getFactionRanks() const
     return mFactionRank;
 }
 
+int MWMechanics::NpcStats::getFactionRank(const std::string &faction) const
+{
+    const std::string lower = Misc::StringUtils::lowerCase(faction);
+    std::map<std::string, int>::const_iterator it = mFactionRank.find(lower);
+    if (it != mFactionRank.end())
+        return it->second;
+
+    return -1;
+}
+
 void MWMechanics::NpcStats::raiseRank(const std::string &faction)
 {
     const std::string lower = Misc::StringUtils::lowerCase(faction);
@@ -88,7 +95,12 @@ void MWMechanics::NpcStats::lowerRank(const std::string &faction)
     std::map<std::string, int>::iterator it = mFactionRank.find(lower);
     if (it != mFactionRank.end())
     {
-        it->second = std::max(0, it->second-1);
+        it->second = it->second-1;
+        if (it->second < 0)
+        {
+            mFactionRank.erase(it);
+            mExpelled.erase(lower);
+        }
     }
 }
 
@@ -152,20 +164,18 @@ float MWMechanics::NpcStats::getSkillProgressRequirement (int skillIndex, const 
     float typeFactor = gmst.find ("fMiscSkillBonus")->mValue.getFloat();
 
     for (int i=0; i<5; ++i)
+    {
         if (class_.mData.mSkills[i][0]==skillIndex)
         {
             typeFactor = gmst.find ("fMinorSkillBonus")->mValue.getFloat();
-
             break;
         }
-
-    for (int i=0; i<5; ++i)
-        if (class_.mData.mSkills[i][1]==skillIndex)
+        else if (class_.mData.mSkills[i][1]==skillIndex)
         {
             typeFactor = gmst.find ("fMajorSkillBonus")->mValue.getFloat();
-
             break;
         }
+    }
 
     progressRequirement *= typeFactor;
 
@@ -233,15 +243,14 @@ void MWMechanics::NpcStats::increaseSkill(int skillIndex, const ESM::Class &clas
         if (class_.mData.mSkills[k][0] == skillIndex)
         {
             mLevelProgress += gmst.find("iLevelUpMinorMult")->mValue.getInteger();
-            increase = gmst.find("iLevelUpMajorMultAttribute")->mValue.getInteger();
+            increase = gmst.find("iLevelUpMinorMultAttribute")->mValue.getInteger();
+            break;
         }
-    }
-    for (int k=0; k<5; ++k)
-    {
-        if (class_.mData.mSkills[k][1] == skillIndex)
+        else if (class_.mData.mSkills[k][1] == skillIndex)
         {
             mLevelProgress += gmst.find("iLevelUpMajorMult")->mValue.getInteger();
-            increase = gmst.find("iLevelUpMinorMultAttribute")->mValue.getInteger();
+            increase = gmst.find("iLevelUpMajorMultAttribute")->mValue.getInteger();
+            break;
         }
     }
 
@@ -255,16 +264,13 @@ void MWMechanics::NpcStats::increaseSkill(int skillIndex, const ESM::Class &clas
     /// \todo check if character is the player, if levelling is ever implemented for NPCs
     MWBase::Environment::get().getWindowManager()->playSound("skillraise");
 
-    std::stringstream message;
+    std::string message = MWBase::Environment::get().getWindowManager ()->getGameSettingString ("sNotifyMessage39", "");
+    message = Misc::StringUtils::format(message, ("#{" + ESM::Skill::sSkillNameIds[skillIndex] + "}"), base);
 
     if (readBook)
-        message << std::string("#{sBookSkillMessage}\n");
-
-    message << boost::format(MWBase::Environment::get().getWindowManager ()->getGameSettingString ("sNotifyMessage39", ""))
-               % std::string("#{" + ESM::Skill::sSkillNameIds[skillIndex] + "}")
-               % static_cast<int> (base);
+        message = "#{sBookSkillMessage}\n" + message;
     
-    MWBase::Environment::get().getWindowManager ()->messageBox(message.str(), MWGui::ShowInDialogueMode_Never);
+    MWBase::Environment::get().getWindowManager ()->messageBox(message, MWGui::ShowInDialogueMode_Never);
 
     if (mLevelProgress >= gmst.find("iLevelUpTotal")->mValue.getInteger())
     {
@@ -364,7 +370,8 @@ int MWMechanics::NpcStats::getReputation() const
 
 void MWMechanics::NpcStats::setReputation(int reputation)
 {
-    mReputation = reputation;
+    // Reputation is capped in original engine
+    mReputation = std::min(255, std::max(0, reputation));
 }
 
 int MWMechanics::NpcStats::getCrimeId() const
@@ -448,6 +455,11 @@ void MWMechanics::NpcStats::setTimeToStartDrowning(float time)
     mTimeToStartDrowning=time;
 }
 
+void MWMechanics::NpcStats::writeState (ESM::CreatureStats& state) const
+{
+    CreatureStats::writeState(state);
+}
+
 void MWMechanics::NpcStats::writeState (ESM::NpcStats& state) const
 {
     for (std::map<std::string, int>::const_iterator iter (mFactionRank.begin());
@@ -486,6 +498,10 @@ void MWMechanics::NpcStats::writeState (ESM::NpcStats& state) const
     std::copy (mUsedIds.begin(), mUsedIds.end(), std::back_inserter (state.mUsedIds));
 
     state.mTimeToStartDrowning = mTimeToStartDrowning;
+}
+void MWMechanics::NpcStats::readState (const ESM::CreatureStats& state)
+{
+    CreatureStats::readState(state);
 }
 
 void MWMechanics::NpcStats::readState (const ESM::NpcStats& state)

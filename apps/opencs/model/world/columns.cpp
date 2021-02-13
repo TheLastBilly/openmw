@@ -1,5 +1,6 @@
 #include "columns.hpp"
 
+#include <components/fallback/fallback.hpp>
 #include <components/misc/stringops.hpp>
 
 #include "universalid.hpp"
@@ -234,12 +235,18 @@ namespace CSMWorld
             { ColumnId_SoundChance, "Chance" },
 
             { ColumnId_FactionReactions, "Reactions" },
-            //{ ColumnId_FactionID, "Faction ID" },
+            { ColumnId_FactionRanks, "Ranks" },
             { ColumnId_FactionReaction, "Reaction" },
+
+            { ColumnId_FactionAttrib1, "Attrib 1" },
+            { ColumnId_FactionAttrib2, "Attrib 2" },
+            { ColumnId_FactionPrimSkill, "Prim Skill" },
+            { ColumnId_FactionFavSkill, "Fav Skill" },
+            { ColumnId_FactionRep, "Fact Rep" },
+            { ColumnId_RankName, "Rank Name" },
 
             { ColumnId_EffectList, "Effects" },
             { ColumnId_EffectId, "Effect" },
-            //{ ColumnId_EffectAttribute, "Attrib" },
             { ColumnId_EffectRange, "Range" },
             { ColumnId_EffectArea, "Area" },
 
@@ -248,7 +255,6 @@ namespace CSMWorld
             { ColumnId_AiWanderDist, "Wander Dist" },
             { ColumnId_AiDuration, "Ai Duration" },
             { ColumnId_AiWanderToD, "Wander ToD" },
-            //{ ColumnId_AiWanderIdle, "Wander Idle" },
             { ColumnId_AiWanderRepeat, "Wander Repeat" },
             { ColumnId_AiActivateName, "Activate" },
             { ColumnId_AiTargetId, "Target ID" },
@@ -282,8 +288,6 @@ namespace CSMWorld
             { ColumnId_UChar, "Value [0..255]" },
             { ColumnId_NpcMisc, "NPC Misc" },
             { ColumnId_Level, "Level" },
-            { ColumnId_NpcFactionID, "Faction ID" },
-            { ColumnId_GenderNpc, "Gender"},
             { ColumnId_Mana, "Mana" },
             { ColumnId_Fatigue, "Fatigue" },
             { ColumnId_NpcDisposition, "NPC Disposition" },
@@ -413,7 +417,7 @@ namespace
 
     static const char *sApparatusTypes[] =
     {
-        "Mortar & Pestle", "Albemic", "Calcinator", "Retort", 0
+        "Mortar & Pestle", "Alembic", "Calcinator", "Retort", 0
     };
 
     static const char *sArmorTypes[] =
@@ -565,11 +569,6 @@ namespace
         "Book", "Scroll", 0
     };
 
-    static const char *sBloodType[] =
-    {
-        "Default (Red)", "Skeleton Blood (White)", "Metal Blood (Golden)", 0
-    };
-
     static const char *sEmitterType[] =
     {
         "<None>", "Flickering", "Flickering (Slow)", "Pulsing", "Pulsing (Slow)", 0
@@ -605,7 +604,6 @@ namespace
             case CSMWorld::Columns::ColumnId_InfoCondFunc: return CSMWorld::ConstInfoSelectWrapper::FunctionEnumStrings;
             case CSMWorld::Columns::ColumnId_InfoCondComp: return CSMWorld::ConstInfoSelectWrapper::RelationEnumStrings;
             case CSMWorld::Columns::ColumnId_BookType: return sBookType;
-            case CSMWorld::Columns::ColumnId_BloodType: return sBloodType;
             case CSMWorld::Columns::ColumnId_EmitterType: return sEmitterType;
 
             default: return 0;
@@ -618,19 +616,28 @@ bool CSMWorld::Columns::hasEnums (ColumnId column)
     return getEnumNames (column)!=0 || column==ColumnId_RecordType;
 }
 
-std::vector<std::string> CSMWorld::Columns::getEnums (ColumnId column)
+std::vector<std::pair<int,std::string>>CSMWorld::Columns::getEnums (ColumnId column)
 {
-    std::vector<std::string> enums;
+    std::vector<std::pair<int,std::string>> enums;
 
     if (const char **table = getEnumNames (column))
         for (int i=0; table[i]; ++i)
-            enums.push_back (table[i]);
+            enums.emplace_back(i, table[i]);
+    else if (column==ColumnId_BloodType)
+    {
+        for (int i=0; i<8; i++)
+        {
+            const std::string& bloodName = Fallback::Map::getString("Blood_Texture_Name_" + std::to_string(i));
+            if (!bloodName.empty())
+                enums.emplace_back(i, bloodName);
+        }
+    }
     else if (column==ColumnId_RecordType)
     {
-        enums.push_back (""); // none
+        enums.emplace_back(UniversalId::Type_None, ""); // none
 
         for (int i=UniversalId::Type_None+1; i<UniversalId::NumberOfTypes; ++i)
-            enums.push_back (UniversalId (static_cast<UniversalId::Type> (i)).getTypeName());
+            enums.emplace_back (i, UniversalId (static_cast<UniversalId::Type> (i)).getTypeName());
     }
 
     return enums;

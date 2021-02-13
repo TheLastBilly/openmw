@@ -35,16 +35,16 @@ void ShapeData::read(NIFStream *nif)
 {
     int verts = nif->getUShort();
 
-    if(nif->getInt())
+    if (nif->getBoolean())
         nif->getVector3s(vertices, verts);
 
-    if(nif->getInt())
+    if (nif->getBoolean())
         nif->getVector3s(normals, verts);
 
     center = nif->getVector3();
     radius = nif->getFloat();
 
-    if(nif->getInt())
+    if (nif->getBoolean())
         nif->getVector4s(colors, verts);
 
     // Only the first 6 bits are used as a count. I think the rest are
@@ -90,6 +90,26 @@ void NiTriShapeData::read(NIFStream *nif)
     }
 }
 
+void NiTriStripsData::read(NIFStream *nif)
+{
+    ShapeData::read(nif);
+
+    // Every strip with n points defines n-2 triangles, so this should be unnecessary.
+    /*int tris =*/ nif->getUShort();
+    // Number of triangle strips
+    int numStrips = nif->getUShort();
+
+    std::vector<unsigned short> lengths;
+    nif->getUShorts(lengths, numStrips);
+
+    if (!numStrips)
+        return;
+
+    strips.resize(numStrips);
+    for (int i = 0; i < numStrips; i++)
+        nif->getUShorts(strips[i], lengths[i]);
+}
+
 void NiAutoNormalParticlesData::read(NIFStream *nif)
 {
     ShapeData::read(nif);
@@ -100,7 +120,7 @@ void NiAutoNormalParticlesData::read(NIFStream *nif)
     particleRadius = nif->getFloat();
     activeCount = nif->getUShort();
 
-    if(nif->getInt())
+    if (nif->getBoolean())
     {
         // Particle sizes
         nif->getFloats(sizes, vertices.size());
@@ -111,7 +131,7 @@ void NiRotatingParticlesData::read(NIFStream *nif)
 {
     NiAutoNormalParticlesData::read(nif);
 
-    if(nif->getInt())
+    if (nif->getBoolean())
     {
         // Rotation quaternions.
         nif->getQuaternions(rotations, vertices.size());
@@ -120,7 +140,7 @@ void NiRotatingParticlesData::read(NIFStream *nif)
 
 void NiPosData::read(NIFStream *nif)
 {
-    mKeyList.reset(new Vector3KeyMap);
+    mKeyList = std::make_shared<Vector3KeyMap>();
     mKeyList->read(nif);
 }
 
@@ -128,14 +148,14 @@ void NiUVData::read(NIFStream *nif)
 {
     for(int i = 0;i < 4;i++)
     {
-        mKeyList[i].reset(new FloatKeyMap);
+        mKeyList[i] = std::make_shared<FloatKeyMap>();
         mKeyList[i]->read(nif);
     }
 }
 
 void NiFloatData::read(NIFStream *nif)
 {
-    mKeyList.reset(new FloatKeyMap);
+    mKeyList = std::make_shared<FloatKeyMap>();
     mKeyList->read(nif);
 }
 
@@ -143,22 +163,23 @@ void NiPixelData::read(NIFStream *nif)
 {
     fmt = (Format)nif->getUInt();
 
-    rmask = nif->getInt(); // usually 0xff
-    gmask = nif->getInt(); // usually 0xff00
-    bmask = nif->getInt(); // usually 0xff0000
-    amask = nif->getInt(); // usually 0xff000000 or zero
+    rmask = nif->getUInt(); // usually 0xff
+    gmask = nif->getUInt(); // usually 0xff00
+    bmask = nif->getUInt(); // usually 0xff0000
+    amask = nif->getUInt(); // usually 0xff000000 or zero
 
-    bpp = nif->getInt();
+    bpp = nif->getUInt();
 
-    // Unknown
-    nif->skip(12);
+    // 8 bytes of "Old Fast Compare". Whatever that means.
+    nif->skip(8);
+    palette.read(nif);
 
-    numberOfMipmaps = nif->getInt();
+    numberOfMipmaps = nif->getUInt();
 
-    // Bytes per pixel, should be bpp * 8
-    /* int bytes = */ nif->getInt();
+    // Bytes per pixel, should be bpp / 8
+    /* int bytes = */ nif->getUInt();
 
-    for(int i=0; i<numberOfMipmaps; i++)
+    for(unsigned int i=0; i<numberOfMipmaps; i++)
     {
         // Image size and offset in the following data field
         Mipmap m;
@@ -169,15 +190,20 @@ void NiPixelData::read(NIFStream *nif)
     }
 
     // Read the data
-    unsigned int dataSize = nif->getInt();
+    unsigned int dataSize = nif->getUInt();
     data.reserve(dataSize);
     for (unsigned i=0; i<dataSize; ++i)
         data.push_back((unsigned char)nif->getChar());
 }
 
+void NiPixelData::post(NIFFile *nif)
+{
+    palette.post(nif);
+}
+
 void NiColorData::read(NIFStream *nif)
 {
-    mKeyMap.reset(new Vector4KeyMap);
+    mKeyMap = std::make_shared<Vector4KeyMap>();
     mKeyMap->read(nif);
 }
 
@@ -199,13 +225,12 @@ void NiSkinData::read(NIFStream *nif)
     trafo.scale = nif->getFloat();
 
     int boneNum = nif->getInt();
-    nif->getInt(); // -1
+    if (nif->getVersion() >= NIFFile::NIFVersion::VER_MW && nif->getVersion() <= NIFFile::NIFVersion::VER_GAMEBRYO)
+        nif->skip(4); // NiSkinPartition link
 
     bones.resize(boneNum);
-    for(int i=0;i<boneNum;i++)
+    for (BoneInfo &bi : bones)
     {
-        BoneInfo &bi = bones[i];
-
         bi.trafo.rotation = nif->getMatrix3();
         bi.trafo.pos = nif->getVector3();
         bi.trafo.scale = nif->getFloat();
@@ -231,7 +256,7 @@ void NiMorphData::read(NIFStream *nif)
     mMorphs.resize(morphCount);
     for(int i = 0;i < morphCount;i++)
     {
-        mMorphs[i].mKeyFrames.reset(new FloatKeyMap);
+        mMorphs[i].mKeyFrames = std::make_shared<FloatKeyMap>();
         mMorphs[i].mKeyFrames->read(nif, true);
         nif->getVector3s(mMorphs[i].mVertices, vertCount);
     }
@@ -239,23 +264,33 @@ void NiMorphData::read(NIFStream *nif)
 
 void NiKeyframeData::read(NIFStream *nif)
 {
-    mRotations.reset(new QuaternionKeyMap);
+    mRotations = std::make_shared<QuaternionKeyMap>();
     mRotations->read(nif);
-    if(mRotations->mInterpolationType == Vector3KeyMap::sXYZInterpolation)
+    if(mRotations->mInterpolationType == InterpolationType_XYZ)
     {
         //Chomp unused float
         nif->getFloat();
-        mXRotations.reset(new FloatKeyMap);
-        mYRotations.reset(new FloatKeyMap);
-        mZRotations.reset(new FloatKeyMap);
+        mXRotations = std::make_shared<FloatKeyMap>();
+        mYRotations = std::make_shared<FloatKeyMap>();
+        mZRotations = std::make_shared<FloatKeyMap>();
         mXRotations->read(nif, true);
         mYRotations->read(nif, true);
         mZRotations->read(nif, true);
     }
-    mTranslations.reset(new Vector3KeyMap);
+    mTranslations = std::make_shared<Vector3KeyMap>();
     mTranslations->read(nif);
-    mScales.reset(new FloatKeyMap);
+    mScales = std::make_shared<FloatKeyMap>();
     mScales->read(nif);
+}
+
+void NiPalette::read(NIFStream *nif)
+{
+    unsigned int alphaMask = !nif->getChar() ? 0xFF000000 : 0;
+    // Fill the entire palette with black even if there isn't enough entries.
+    colors.resize(256);
+    unsigned int numEntries = nif->getUInt();
+    for (unsigned int i = 0; i < numEntries; i++)
+        colors[i] = nif->getUInt() | alphaMask;
 }
 
 } // Namespace

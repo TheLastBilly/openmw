@@ -46,7 +46,6 @@ namespace MWSound
     {
         const VFS::Manager* mVFS;
 
-        Fallback::Map mFallback;
         std::unique_ptr<Sound_Output> mOutput;
 
         // Caches available music tracks by <playlist name, (sound files) >
@@ -94,6 +93,7 @@ namespace MWSound
         SoundMap mActiveSounds;
 
         typedef std::map<MWWorld::ConstPtr,Stream*> SaySoundMap;
+        SaySoundMap mSaySoundsQueue;
         SaySoundMap mActiveSaySounds;
 
         typedef std::vector<Stream*> TrackList;
@@ -107,10 +107,13 @@ namespace MWSound
         osg::Vec3f mListenerDir;
         osg::Vec3f mListenerUp;
 
-        int mPausedSoundTypes;
+        int mPausedSoundTypes[BlockerType::MaxCount] = {};
 
         Sound *mUnderwaterSound;
         Sound *mNearWaterSound;
+
+        std::string mNextMusic;
+        bool mPlaybackPaused;
 
         Sound_Buffer *insertSound(const std::string &soundId, const ESM::Sound *sound);
 
@@ -134,8 +137,6 @@ namespace MWSound
         void updateWaterSound(float duration);
         void updateMusic(float duration);
 
-        std::string mNextMusic;
-
         float volumeFromType(Type type) const;
 
         SoundManager(const SoundManager &rhs);
@@ -149,7 +150,7 @@ namespace MWSound
         ///< Stop the given object from playing given sound buffer.
 
     public:
-        SoundManager(const VFS::Manager* vfs, const std::map<std::string, std::string>& fallbackMap, bool useSound);
+        SoundManager(const VFS::Manager* vfs, bool useSound);
         virtual ~SoundManager();
 
         virtual void processChangedSettings(const Settings::CategorySettingVector& settings);
@@ -168,6 +169,9 @@ namespace MWSound
         ///< Start playing music from the selected folder
         /// \param name of the folder that contains the playlist
 
+        virtual void playTitleMusic();
+        ///< Start playing title music
+
         virtual void say(const MWWorld::ConstPtr &reference, const std::string& filename);
         ///< Make an actor say some text.
         /// \param filename name of a sound file in "Sound/" in the data directory.
@@ -176,8 +180,11 @@ namespace MWSound
         ///< Say some text, without an actor ref
         /// \param filename name of a sound file in "Sound/" in the data directory.
 
-        virtual bool sayDone(const MWWorld::ConstPtr &reference=MWWorld::ConstPtr()) const;
+        virtual bool sayActive(const MWWorld::ConstPtr &reference=MWWorld::ConstPtr()) const;
         ///< Is actor not speaking?
+
+        virtual bool sayDone(const MWWorld::ConstPtr &reference=MWWorld::ConstPtr()) const;
+        ///< For scripting backward compatibility
 
         virtual void stopSay(const MWWorld::ConstPtr &reference=MWWorld::ConstPtr());
         ///< Stop an actor speaking
@@ -238,11 +245,14 @@ namespace MWSound
         virtual bool getSoundPlaying(const MWWorld::ConstPtr &reference, const std::string& soundId) const;
         ///< Is the given sound currently playing on the given object?
 
-        virtual void pauseSounds(int types);
+        virtual void pauseSounds(MWSound::BlockerType blocker, int types=int(Type::Mask));
         ///< Pauses all currently playing sounds, including music.
 
-        virtual void resumeSounds(int types);
+        virtual void resumeSounds(MWSound::BlockerType blocker);
         ///< Resumes all previously paused sounds.
+
+        virtual void pausePlayback();
+        virtual void resumePlayback();
 
         virtual void update(float duration);
 

@@ -70,6 +70,7 @@ namespace MWGui
         toAdd->eventMouseWheel += MyGUI::newDelegate(this, &SpellBuyingWindow::onMouseWheel);
         toAdd->setUserString("ToolTipType", "Spell");
         toAdd->setUserString("Spell", spell.mId);
+        toAdd->setUserString("SpellCost", std::to_string(spell.mData.mCost));
         toAdd->eventMouseButtonClick += MyGUI::newDelegate(this, &SpellBuyingWindow::onSpellButtonClick);
         mSpellsWidgetMap.insert(std::make_pair (toAdd, spell.mId));
     }
@@ -122,9 +123,9 @@ namespace MWGui
 
         std::stable_sort(spellsToSort.begin(), spellsToSort.end(), sortSpells);
 
-        for (std::vector<const ESM::Spell*>::iterator it = spellsToSort.begin() ; it != spellsToSort.end(); ++it)
+        for (const ESM::Spell* spell : spellsToSort)
         {
-            addSpell(**it);
+            addSpell(*spell);
         }
 
         spellsToSort.clear();

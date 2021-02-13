@@ -92,6 +92,12 @@ namespace Nif
     void NiMaterialColorController::read(NIFStream *nif)
     {
         Controller::read(nif);
+        // Two bits that correspond to the controlled material color.
+        // 00: Ambient
+        // 01: Diffuse
+        // 10: Specular
+        // 11: Emissive
+        targetColor = (flags >> 4) & 3;
         data.read(nif);
     }
 
@@ -139,7 +145,7 @@ namespace Nif
     {
         Controller::read(nif);
 
-        nif->getUShort(); // always 0
+        uvSet = nif->getUShort();
         data.read(nif);
     }
 
@@ -173,11 +179,24 @@ namespace Nif
         data.post(nif);
     }
 
+    void NiRollController::read(NIFStream *nif)
+    {
+        Controller::read(nif);
+        data.read(nif);
+    }
+
+    void NiRollController::post(NIFFile *nif)
+    {
+        Controller::post(nif);
+        data.post(nif);
+    }
+
     void NiGeomMorpherController::read(NIFStream *nif)
     {
         Controller::read(nif);
         data.read(nif);
-        nif->getChar(); // always 0
+        if (nif->getVersion() >= NIFFile::NIFVersion::VER_MW)
+            /*bool alwaysActive = */nif->getChar(); // Always 0
     }
 
     void NiGeomMorpherController::post(NIFFile *nif)

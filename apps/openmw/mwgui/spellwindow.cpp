@@ -1,10 +1,11 @@
 #include "spellwindow.hpp"
 
-#include <boost/format.hpp>
-
+#include <MyGUI_Button.h>
 #include <MyGUI_EditBox.h>
 #include <MyGUI_InputManager.h>
+#include <MyGUI_Window.h>
 
+#include <components/misc/stringops.hpp>
 #include <components/settings/settings.hpp>
 
 #include "../mwbase/windowmanager.hpp"
@@ -37,16 +38,22 @@ namespace MWGui
     {
         mSpellIcons = new SpellIcons();
 
+        MyGUI::Widget* deleteButton;
+        getWidget(deleteButton, "DeleteSpellButton");
+
         getWidget(mSpellView, "SpellView");
         getWidget(mEffectBox, "EffectsBox");
         getWidget(mFilterEdit, "FilterEdit");
 
-        mFilterEdit->setUserString("IgnoreTabKey", "y");
-
         mSpellView->eventSpellClicked += MyGUI::newDelegate(this, &SpellWindow::onModelIndexSelected);
         mFilterEdit->eventEditTextChange += MyGUI::newDelegate(this, &SpellWindow::onFilterChanged);
+        deleteButton->eventMouseButtonClick += MyGUI::newDelegate(this, &SpellWindow::onDeleteClicked);
 
         setCoord(498, 300, 302, 300);
+
+        // Adjust the spell filtering widget size because of MyGUI limitations.
+        int filterWidth = mSpellView->getSize().width - deleteButton->getSize().width - 3;
+        mFilterEdit->setSize(filterWidth, mFilterEdit->getSize().height);
     }
 
     SpellWindow::~SpellWindow()
@@ -63,7 +70,9 @@ namespace MWGui
 
     void SpellWindow::onTitleDoubleClicked()
     {
-        if (!mPinned)
+        if (MyGUI::InputManager::getInstance().isShiftPressed())
+            MWBase::Environment::get().getWindowManager()->toggleMaximized(this);
+        else if (!mPinned)
             MWBase::Environment::get().getWindowManager()->toggleVisible(GW_Magic);
     }
 
@@ -141,13 +150,17 @@ namespace MWGui
 
         MWWorld::Ptr player = MWMechanics::getPlayer();
         std::string raceId = player.get<ESM::NPC>()->mBase->mRace;
-        const std::string& signId =
-            MWBase::Environment::get().getWorld()->getPlayer().getBirthSign();
         const ESM::Race* race = MWBase::Environment::get().getWorld()->getStore().get<ESM::Race>().find(raceId);
-        const ESM::BirthSign* birthsign = MWBase::Environment::get().getWorld()->getStore().get<ESM::BirthSign>().find(signId);
+        // can't delete racial spells, birthsign spells or powers
+        bool isInherent = race->mPowers.exists(spell->mId) || spell->mData.mType == ESM::Spell::ST_Power;
+        const std::string& signId = MWBase::Environment::get().getWorld()->getPlayer().getBirthSign();
+        if (!isInherent && !signId.empty())
+        {
+            const ESM::BirthSign* sign = MWBase::Environment::get().getWorld()->getStore().get<ESM::BirthSign>().find(signId);
+            isInherent = sign->mPowers.exists(spell->mId);
+        }
 
-        // can't delete racial spells, birthsign spells or powers 
-        if (race->mPowers.exists(spell->mId) || birthsign->mPowers.exists(spell->mId) || spell->mData.mType == ESM::Spell::ST_Power)
+        if (isInherent)
         {
             MWBase::Environment::get().getWindowManager()->messageBox("#{sDeleteSpellError}");
         }
@@ -157,7 +170,7 @@ namespace MWGui
             mSpellToDelete = spellId;
             ConfirmationDialog* dialog = MWBase::Environment::get().getWindowManager()->getConfirmationDialog();
             std::string question = MWBase::Environment::get().getWindowManager()->getGameSettingString("sQuestionDeleteSpell", "Delete %s?");
-            question = boost::str(boost::format(question) % spell->mName);
+            question = Misc::StringUtils::format(question, spell->mName);
             dialog->askForConfirmation(question);
             dialog->eventOkClicked.clear();
             dialog->eventOkClicked += MyGUI::newDelegate(this, &SpellWindow::onDeleteSpellAccept);
@@ -184,6 +197,17 @@ namespace MWGui
     void SpellWindow::onFilterChanged(MyGUI::EditBox *sender)
     {
         mSpellView->setModel(new SpellModel(MWMechanics::getPlayer(), sender->getCaption()));
+    }
+
+    void SpellWindow::onDeleteClicked(MyGUI::Widget *widget)
+    {
+        SpellModel::ModelIndex selected = mSpellView->getModel()->getSelectedIndex();
+        if (selected < 0)
+            return;
+
+        const Spell& spell = mSpellView->getModel()->getItem(selected);
+        if (spell.mType != Spell::Type_EnchantedItem)
+            askDeleteSpell(spell.mId);
     }
 
     void SpellWindow::onSpellSelected(const std::string& spellId)
@@ -223,12 +247,9 @@ namespace MWGui
 
         mSpellView->setModel(new SpellModel(MWMechanics::getPlayer(), ""));
 
-        SpellModel::ModelIndex selected = 0;
-        for (SpellModel::ModelIndex i = 0; i<int(mSpellView->getModel()->getItemCount()); ++i)
-        {
-            if (mSpellView->getModel()->getItem(i).mSelected)
-                selected = i;
-        }
+        SpellModel::ModelIndex selected = mSpellView->getModel()->getSelectedIndex();
+        if (selected < 0)
+            selected = 0;
 
         selected += next ? 1 : -1;
         int itemcount = mSpellView->getModel()->getItemCount();

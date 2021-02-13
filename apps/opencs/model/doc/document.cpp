@@ -1,7 +1,6 @@
 #include "document.hpp"
 
 #include <cassert>
-#include <fstream>
 
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/fstream.hpp>
@@ -273,37 +272,38 @@ void CSMDoc::Document::createBase()
 CSMDoc::Document::Document (const Files::ConfigurationManager& configuration,
     const std::vector< boost::filesystem::path >& files,bool new_,
     const boost::filesystem::path& savePath, const boost::filesystem::path& resDir,
-    const Fallback::Map* fallback,
-    ToUTF8::FromType encoding,
-    const std::vector<std::string>& blacklistedScripts,
+    ToUTF8::FromType encoding, const std::vector<std::string>& blacklistedScripts,
     bool fsStrict, const Files::PathContainer& dataPaths, const std::vector<std::string>& archives)
-: mSavePath (savePath), mContentFiles (files), mNew (new_), mData (encoding, fsStrict, dataPaths, archives, fallback, resDir),
+: mSavePath (savePath), mContentFiles (files), mNew (new_), mData (encoding, fsStrict, dataPaths, archives, resDir),
   mTools (*this, encoding),
   mProjectPath ((configuration.getUserDataPath() / "projects") /
   (savePath.filename().string() + ".project")),
   mSavingOperation (*this, mProjectPath, encoding),
   mSaving (&mSavingOperation),
-  mResDir(resDir), mFallbackMap(fallback),
-  mRunner (mProjectPath), mDirty (false), mIdCompletionManager(mData)
+  mResDir(resDir), mRunner (mProjectPath),
+  mDirty (false), mIdCompletionManager(mData)
 {
     if (mContentFiles.empty())
         throw std::runtime_error ("Empty content file sequence");
 
     if (mNew || !boost::filesystem::exists (mProjectPath))
     {
-        boost::filesystem::path customFiltersPath (configuration.getUserDataPath());
-        customFiltersPath /= "defaultfilters";
+        boost::filesystem::path filtersPath (configuration.getUserDataPath() / "defaultfilters");
 
-        std::ofstream destination (mProjectPath.string().c_str(), std::ios::binary);
+        boost::filesystem::ofstream destination(mProjectPath, std::ios::out | std::ios::binary);
+        if (!destination.is_open())
+            throw std::runtime_error("Can not create project file: " + mProjectPath.string());
+        destination.exceptions(std::ios::failbit | std::ios::badbit);
 
-        if (boost::filesystem::exists (customFiltersPath))
-        {
-            destination << std::ifstream(customFiltersPath.string().c_str(), std::ios::binary).rdbuf();
-        }
-        else
-        {
-            destination << std::ifstream(std::string(mResDir.string() + "/defaultfilters").c_str(), std::ios::binary).rdbuf();
-        }
+        if (!boost::filesystem::exists (filtersPath))
+            filtersPath = mResDir / "defaultfilters";
+
+        boost::filesystem::ifstream source(filtersPath, std::ios::in | std::ios::binary);
+        if (!source.is_open())
+            throw std::runtime_error("Can not read filters file: " + filtersPath.string());
+        source.exceptions(std::ios::failbit | std::ios::badbit);
+
+        destination << source.rdbuf();
     }
 
     if (mNew)
@@ -362,6 +362,11 @@ int CSMDoc::Document::getState() const
         state |= State_Locked | State_Operation | operations;
 
     return state;
+}
+
+const boost::filesystem::path& CSMDoc::Document::getResourceDir() const
+{
+    return mResDir;
 }
 
 const boost::filesystem::path& CSMDoc::Document::getSavePath() const

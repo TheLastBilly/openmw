@@ -65,6 +65,9 @@ namespace MWGui
             /// Cycle to previous/next weapon
             void cycle(bool next);
 
+        protected:
+            virtual void onTitleDoubleClicked();
+
         private:
             DragAndDrop* mDragAndDrop;
 
@@ -89,8 +92,8 @@ namespace MWGui
             MyGUI::Button* mFilterApparel;
             MyGUI::Button* mFilterMagic;
             MyGUI::Button* mFilterMisc;
-
-            MWWorld::Ptr mSkippedToEquip;
+            
+            MyGUI::EditBox* mFilterEdit;
 
             GuiMode mGuiMode;
 
@@ -104,19 +107,23 @@ namespace MWGui
             float mScaleFactor;
             float mUpdateTimer;
 
+            void toggleMaximized();
+
             void onItemSelected(int index);
             void onItemSelectedFromSourceModel(int index);
 
             void onBackgroundSelected();
+
+            std::string getModeSetting() const;
 
             void sellItem(MyGUI::Widget* sender, int count);
             void dragItem(MyGUI::Widget* sender, int count);
 
             void onWindowResize(MyGUI::Window* _sender);
             void onFilterChanged(MyGUI::Widget* _sender);
+            void onNameFilterChanged(MyGUI::EditBox* _sender);
             void onAvatarClicked(MyGUI::Widget* _sender);
             void onPinToggled();
-            void onTitleDoubleClicked();
 
             void updateEncumbranceBar();
             void notifyContentChanged();

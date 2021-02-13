@@ -4,7 +4,6 @@
 #include <string>
 #include <memory>
 #include <vector>
-#include <iostream>
 
 #include <osg/ref_ptr>
 #include <osg/Vec4f>
@@ -26,6 +25,7 @@ namespace osg
 namespace osgParticle
 {
     class ParticleSystem;
+    class BoxPlacer;
 }
 
 namespace Resource
@@ -40,6 +40,7 @@ namespace MWRender
     class CloudUpdater;
     class Sun;
     class Moon;
+    class RainCounter;
     class RainShooter;
     class RainFader;
     class AlphaFader;
@@ -69,6 +70,8 @@ namespace MWRender
         float mDLFogOffset;
 
         float mWindSpeed;
+        float mCurrentWindSpeed;
+        float mNextWindSpeed;
 
         float mCloudSpeed;
 
@@ -86,8 +89,12 @@ namespace MWRender
         std::string mRainEffect;
         float mEffectFade;
 
+        float mRainDiameter;
+        float mRainMinHeight;
+        float mRainMaxHeight;
         float mRainSpeed;
-        float mRainFrequency;
+        float mRainEntranceSpeed;
+        int mRainMaxRaindrops;
     };
 
     struct MoonState
@@ -180,6 +187,7 @@ namespace MWRender
 
         void createRain();
         void destroyRain();
+        void switchUnderwaterRain();
         void updateRainParameters();
 
         Resource::SceneManager* mSceneManager;
@@ -216,6 +224,8 @@ namespace MWRender
 
         osg::ref_ptr<osg::Group> mRainNode;
         osg::ref_ptr<osgParticle::ParticleSystem> mRainParticleSystem;
+        osg::ref_ptr<osgParticle::BoxPlacer> mPlacer;
+        osg::ref_ptr<RainCounter> mCounter;
         osg::ref_ptr<RainShooter> mRainShooter;
         osg::ref_ptr<RainFader> mRainFader;
 
@@ -249,7 +259,11 @@ namespace MWRender
         bool mRainEnabled;
         std::string mRainEffect;
         float mRainSpeed;
-        float mRainFrequency;
+        float mRainDiameter;
+        float mRainMinHeight;
+        float mRainMaxHeight;
+        float mRainEntranceSpeed;
+        int mRainMaxRaindrops;
         float mWindSpeed;
 
         bool mEnabled;

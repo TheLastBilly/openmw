@@ -16,15 +16,14 @@ namespace MWGui
 
 bool shouldAcceptKeyFocus(MyGUI::Widget* w)
 {
-    if (w && w->getUserString("IgnoreTabKey") == "y")
-        return false;
-
     return w && !w->castType<MyGUI::Window>(false) && w->getInheritedEnabled() && w->getInheritedVisible() && w->getVisible() && w->getEnabled();
 }
 
 /// Recursively get all child widgets that accept keyboard input
 void getKeyFocusWidgets(MyGUI::Widget* parent, std::vector<MyGUI::Widget*>& results)
 {
+    assert(parent != nullptr);
+
     if (!parent->getVisible() || !parent->getEnabled())
         return;
 
@@ -116,6 +115,12 @@ void KeyboardNavigation::onFrame()
 {
     if (!mEnabled)
         return;
+
+    if (!MWBase::Environment::get().getWindowManager()->isGuiMode())
+    {
+        MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(nullptr);
+        return;
+    }
 
     MyGUI::Widget* focus = MyGUI::InputManager::getInstance().getKeyFocusWidget();
 
@@ -216,6 +221,9 @@ bool KeyboardNavigation::injectKeyPress(MyGUI::KeyCode key, unsigned int text, b
 
 bool KeyboardNavigation::switchFocus(int direction, bool wrap)
 {
+    if (!MWBase::Environment::get().getWindowManager()->isGuiMode())
+        return false;
+
     MyGUI::Widget* focus = MyGUI::InputManager::getInstance().getKeyFocusWidget();
 
     bool isCycle = (direction == D_Prev || direction == D_Next);

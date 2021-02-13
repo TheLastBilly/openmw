@@ -83,6 +83,9 @@ void CSVWorld::SceneSubView::makeConnections (CSVRender::UnpagedWorldspaceWidget
 
     connect(widget, SIGNAL(cellChanged(const CSMWorld::UniversalId&)),
             this, SLOT(cellSelectionChanged(const CSMWorld::UniversalId&)));
+
+    connect(widget, SIGNAL(requestFocus (const std::string&)),
+            this, SIGNAL(requestFocus (const std::string&)));
 }
 
 void CSVWorld::SceneSubView::makeConnections (CSVRender::PagedWorldspaceWidget* widget)
@@ -94,6 +97,9 @@ void CSVWorld::SceneSubView::makeConnections (CSVRender::PagedWorldspaceWidget* 
 
     connect (widget, SIGNAL (cellSelectionChanged (const CSMWorld::CellSelection&)),
              this, SLOT (cellSelectionChanged (const CSMWorld::CellSelection&)));
+
+    connect(widget, SIGNAL(requestFocus (const std::string&)),
+            this, SIGNAL(requestFocus (const std::string&)));
 }
 
 CSVWidget::SceneToolbar* CSVWorld::SceneSubView::makeToolbar (CSVRender::WorldspaceWidget* widget, widgetType type)
@@ -150,10 +156,8 @@ std::string CSVWorld::SceneSubView::getTitle() const
 void CSVWorld::SceneSubView::cellSelectionChanged (const CSMWorld::UniversalId& id)
 {
     setUniversalId(id);
-    std::ostringstream stream;
-    stream << "Scene: " << getUniversalId().getId();
 
-    mTitle = stream.str();
+    mTitle = "Scene: " + getUniversalId().getId();
     setWindowTitle (QString::fromUtf8 (mTitle.c_str()));
     emit updateTitle();
 }

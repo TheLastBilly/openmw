@@ -10,6 +10,7 @@
 #include <osg/Vec3>
 
 #include <components/sceneutil/pathgridutil.hpp>
+#include <components/sceneutil/vismask.hpp>
 
 #include "../../model/world/cell.hpp"
 #include "../../model/world/commands.hpp"
@@ -31,7 +32,7 @@ namespace CSVRender
     };
 
     PathgridTag::PathgridTag(Pathgrid* pathgrid)
-        : TagBase(Mask_Pathgrid), mPathgrid(pathgrid)
+        : TagBase(SceneUtil::Mask_Pathgrid), mPathgrid(pathgrid)
     {
     }
 
@@ -70,7 +71,7 @@ namespace CSVRender
         mBaseNode->setPosition(osg::Vec3f(mCoords.getX() * CoordScalar, mCoords.getY() * CoordScalar, 0.f));
         mBaseNode->setUserData(mTag);
         mBaseNode->setUpdateCallback(new PathgridNodeCallback());
-        mBaseNode->setNodeMask(Mask_Pathgrid);
+        mBaseNode->setNodeMask(SceneUtil::Mask_Pathgrid);
         mParent->addChild(mBaseNode);
 
         mPathgridGeode = new osg::Geode();
@@ -224,8 +225,7 @@ namespace CSVRender
 
     void Pathgrid::applyPoint(CSMWorld::CommandMacro& commands, const osg::Vec3d& worldPos)
     {
-        CSMWorld::IdTree* model = dynamic_cast<CSMWorld::IdTree*>(mData.getTableModel(
-                CSMWorld::UniversalId::Type_Pathgrids));
+        CSMWorld::IdTree* model = &dynamic_cast<CSMWorld::IdTree&>(*mData.getTableModel(CSMWorld::UniversalId::Type_Pathgrids));
 
         const CSMWorld::Pathgrid* source = getPathgridSource();
         if (source)
@@ -357,8 +357,7 @@ namespace CSVRender
         const CSMWorld::Pathgrid* source = getPathgridSource();
         if (source)
         {
-            CSMWorld::IdTree* model = dynamic_cast<CSMWorld::IdTree*>(mData.getTableModel(
-                CSMWorld::UniversalId::Type_Pathgrids));
+            CSMWorld::IdTree* model = &dynamic_cast<CSMWorld::IdTree&>(*mData.getTableModel(CSMWorld::UniversalId::Type_Pathgrids));
 
             // Want to remove nodes from end of list first
             std::sort(mSelected.begin(), mSelected.end(), std::greater<int>());
@@ -458,9 +457,7 @@ namespace CSVRender
                 }
             }
 
-            CSMWorld::IdTree* model = dynamic_cast<CSMWorld::IdTree*>(mData.getTableModel(
-                CSMWorld::UniversalId::Type_Pathgrids));
-
+            CSMWorld::IdTree* model = &dynamic_cast<CSMWorld::IdTree&>(*mData.getTableModel(CSMWorld::UniversalId::Type_Pathgrids));
             int parentColumn = mPathgridCollection.findColumnIndex(CSMWorld::Columns::ColumnId_PathgridEdges);
 
             std::set<int, std::greater<int> >::iterator row;
@@ -633,8 +630,7 @@ namespace CSVRender
     void Pathgrid::addEdge(CSMWorld::CommandMacro& commands, const CSMWorld::Pathgrid& source, unsigned short node1,
         unsigned short node2)
     {
-        CSMWorld::IdTree* model = dynamic_cast<CSMWorld::IdTree*>(mData.getTableModel(
-            CSMWorld::UniversalId::Type_Pathgrids));
+        CSMWorld::IdTree* model = &dynamic_cast<CSMWorld::IdTree&>(*mData.getTableModel(CSMWorld::UniversalId::Type_Pathgrids));
 
         int recordIndex = mPathgridCollection.getIndex(mId);
         int parentColumn = mPathgridCollection.findColumnIndex(CSMWorld::Columns::ColumnId_PathgridEdges);

@@ -75,7 +75,7 @@ namespace MWSound
         virtual bool isSoundPlaying(Sound *sound);
         virtual void updateSound(Sound *sound);
 
-        virtual bool streamSound(DecoderPtr decoder, Stream *sound);
+        virtual bool streamSound(DecoderPtr decoder, Stream *sound, bool getLoudnessData=false);
         virtual bool streamSound3D(DecoderPtr decoder, Stream *sound, bool getLoudnessData);
         virtual void finishStream(Stream *sound);
         virtual double getStreamDelay(Stream *sound);
@@ -91,6 +91,9 @@ namespace MWSound
 
         virtual void pauseSounds(int types);
         virtual void resumeSounds(int types);
+
+        virtual void pauseActiveDevice();
+        virtual void resumeActiveDevice();
 
         OpenAL_Output(SoundManager &mgr);
         virtual ~OpenAL_Output();

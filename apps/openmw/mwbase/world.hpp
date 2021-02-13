@@ -1,13 +1,17 @@
 #ifndef GAME_MWBASE_WORLD_H
 #define GAME_MWBASE_WORLD_H
 
+#include "rotationflags.hpp"
+
 #include <vector>
 #include <map>
 #include <set>
+#include <deque>
 
 #include <components/esm/cellid.hpp>
 
 #include "../mwworld/ptr.hpp"
+#include "../mwworld/doorstate.hpp"
 
 #include "../mwrender/rendermode.hpp"
 
@@ -54,6 +58,11 @@ namespace MWMechanics
     struct Movement;
 }
 
+namespace DetourNavigator
+{
+    struct Navigator;
+}
+
 namespace MWWorld
 {
     class CellStore;
@@ -64,11 +73,6 @@ namespace MWWorld
     class RefData;
 
     typedef std::vector<std::pair<MWWorld::Ptr,MWMechanics::Movement> > PtrMovementList;
-}
-
-namespace Fallback
-{
-    class Map;
 }
 
 namespace MWBase
@@ -114,6 +118,9 @@ namespace MWBase
 
             virtual MWWorld::CellStore *getCell (const ESM::CellId& id) = 0;
 
+            virtual void testExteriorCells() = 0;
+            virtual void testInteriorCells() = 0;
+
             virtual void useDeathCamera() = 0;
 
             virtual void setWaterHeight(const float height) = 0;
@@ -124,10 +131,9 @@ namespace MWBase
 
             virtual void adjustSky() = 0;
 
-            virtual const Fallback::Map *getFallback () const = 0;
-
             virtual MWWorld::Player& getPlayer() = 0;
             virtual MWWorld::Ptr getPlayerPtr() = 0;
+            virtual MWWorld::ConstPtr getPlayerConstPtr() const = 0;
 
             virtual const MWWorld::ESMStore& getStore() const = 0;
 
@@ -176,7 +182,7 @@ namespace MWBase
             ///< Return a pointer to a liveCellRef with the given name.
             /// \param activeOnly do non search inactive cells.
 
-            virtual MWWorld::Ptr searchPtr (const std::string& name, bool activeOnly) = 0;
+            virtual MWWorld::Ptr searchPtr (const std::string& name, bool activeOnly, bool searchInContainers = true) = 0;
             ///< Return a pointer to a liveCellRef with the given name.
             /// \param activeOnly do non search inactive cells.
 
@@ -219,6 +225,8 @@ namespace MWBase
             virtual void changeWeather(const std::string& region, const unsigned int id) = 0;
 
             virtual int getCurrentWeather() const = 0;
+
+            virtual unsigned int getNightDayMode() const = 0;
 
             virtual int getMasserPhase() const = 0;
 
@@ -269,7 +277,7 @@ namespace MWBase
             virtual void deleteObject (const MWWorld::Ptr& ptr) = 0;
             virtual void undeleteObject (const MWWorld::Ptr& ptr) = 0;
 
-            virtual MWWorld::Ptr moveObject (const MWWorld::Ptr& ptr, float x, float y, float z) = 0;
+            virtual MWWorld::Ptr moveObject (const MWWorld::Ptr& ptr, float x, float y, float z, bool moveToActive=false) = 0;
             ///< @return an updated Ptr in case the Ptr's cell changes
 
             virtual MWWorld::Ptr moveObject(const MWWorld::Ptr &ptr, MWWorld::CellStore* newCell, float x, float y, float z, bool movePhysics=true) = 0;
@@ -277,7 +285,8 @@ namespace MWBase
 
             virtual void scaleObject (const MWWorld::Ptr& ptr, float scale) = 0;
 
-            virtual void rotateObject(const MWWorld::Ptr& ptr,float x,float y,float z, bool adjust = false) = 0;
+            virtual void rotateObject(const MWWorld::Ptr& ptr, float x, float y, float z,
+                RotationFlags flags = RotationFlag_inverseOrder) = 0;
 
             virtual MWWorld::Ptr placeObject(const MWWorld::ConstPtr& ptr, MWWorld::CellStore* cell, ESM::Position pos) = 0;
             ///< Place an object. Makes a copy of the Ptr.
@@ -297,11 +306,15 @@ namespace MWBase
             ///< Queues movement for \a ptr (in local space), to be applied in the next call to
             /// doPhysics.
 
+            virtual void updateAnimatedCollisionShape(const MWWorld::Ptr &ptr) = 0;
+
             virtual bool castRay (float x1, float y1, float z1, float x2, float y2, float z2, int mask) = 0;
             ///< cast a Ray and return true if there is an object in the ray path.
 
             virtual bool castRay (float x1, float y1, float z1, float x2, float y2, float z2) = 0;
 
+            virtual bool castRay(const osg::Vec3f& from, const osg::Vec3f& to, int mask, const MWWorld::ConstPtr& ignore) = 0;
+            
             virtual void setActorCollisionMode(const MWWorld::Ptr& ptr, bool internal, bool external) = 0;
             virtual bool isActorCollisionEnabled(const MWWorld::Ptr& ptr) = 0;
 
@@ -363,6 +376,7 @@ namespace MWBase
             /// \return pointer to created record
 
             virtual void update (float duration, bool paused) = 0;
+            virtual void updatePhysics (float duration, bool paused) = 0;
 
             virtual void updateWindowManager () = 0;
 
@@ -397,12 +411,11 @@ namespace MWBase
 
             virtual osg::Matrixf getActorHeadTransform(const MWWorld::ConstPtr& actor) const = 0;
 
-            virtual void togglePOV() = 0;
+            virtual void togglePOV(bool force = false) = 0;
             virtual bool isFirstPerson() const = 0;
             virtual void togglePreviewMode(bool enable) = 0;
             virtual bool toggleVanityMode(bool enable) = 0;
             virtual void allowVanityMode(bool allow) = 0;
-            virtual void togglePlayerLooking(bool enable) = 0;
             virtual void changeVanityModeScale(float factor) = 0;
             virtual bool vanityRotateCamera(float * rot) = 0;
             virtual void setCameraDistance(float dist, bool adjust = false, bool override = true)=0;
@@ -415,7 +428,7 @@ namespace MWBase
             /// update movement state of a non-teleport door as specified
             /// @param state see MWClass::setDoorState
             /// @note throws an exception when invoked on a teleport door
-            virtual void activateDoor(const MWWorld::Ptr& door, int state) = 0;
+            virtual void activateDoor(const MWWorld::Ptr& door, MWWorld::DoorState state) = 0;
 
             virtual void getActorsStandingOn (const MWWorld::ConstPtr& object, std::vector<MWWorld::Ptr> &actors) = 0; ///< get a list of actors standing on \a object
             virtual bool getPlayerStandingOn (const MWWorld::ConstPtr& object) = 0; ///< @return true if the player is standing on \a object
@@ -447,8 +460,9 @@ namespace MWBase
             {
                 Rest_Allowed = 0,
                 Rest_OnlyWaiting = 1,
-                Rest_PlayerIsUnderwater = 2,
-                Rest_EnemiesAreNearby = 3
+                Rest_PlayerIsInAir = 2,
+                Rest_PlayerIsUnderwater = 3,
+                Rest_EnemiesAreNearby = 4
             };
 
             /// check if the player is allowed to rest
@@ -572,11 +586,13 @@ namespace MWBase
             /// Return the distance between actor's weapon and target's collision box.
             virtual float getHitDistance(const MWWorld::ConstPtr& actor, const MWWorld::ConstPtr& target) = 0;
 
+            virtual void addContainerScripts(const MWWorld::Ptr& reference, MWWorld::CellStore* cell) = 0;
             virtual void removeContainerScripts(const MWWorld::Ptr& reference) = 0;
 
             virtual bool isPlayerInJail() const = 0;
 
-            virtual void rest() = 0;
+            virtual void rest(double hours) = 0;
+            virtual void rechargeItems(double duration, bool activeOnly) = 0;
 
             virtual void setPlayerTraveling(bool traveling) = 0;
             virtual bool isPlayerTraveling() const = 0;
@@ -595,6 +611,22 @@ namespace MWBase
 
             /// Preload VFX associated with this effect list
             virtual void preloadEffects(const ESM::EffectList* effectList) = 0;
+
+            virtual DetourNavigator::Navigator* getNavigator() const = 0;
+
+            virtual void updateActorPath(const MWWorld::ConstPtr& actor, const std::deque<osg::Vec3f>& path,
+                    const osg::Vec3f& halfExtents, const osg::Vec3f& start, const osg::Vec3f& end) const = 0;
+
+            virtual void removeActorPath(const MWWorld::ConstPtr& actor) const = 0;
+
+            virtual void setNavMeshNumberToRender(const std::size_t value) = 0;
+
+            /// Return physical half extents of the given actor to be used in pathfinding
+            virtual osg::Vec3f getPathfindingHalfExtents(const MWWorld::ConstPtr& actor) const = 0;
+
+            virtual bool hasCollisionWithDoor(const MWWorld::ConstPtr& door, const osg::Vec3f& position, const osg::Vec3f& destination) const = 0;
+
+            virtual bool isAreaOccupiedByOtherActor(const osg::Vec3f& position, const float radius, const MWWorld::ConstPtr& ignore) const = 0;
     };
 }
 

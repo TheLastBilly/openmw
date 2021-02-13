@@ -134,7 +134,12 @@ QSize CSVWorld::EnumDelegate::sizeHint(const QStyleOptionViewItem &option, const
         itemOption.state = option.state;
 
         const QString &valueText = mValues.at(valueIndex).second;
+
+#if QT_VERSION >= QT_VERSION_CHECK(5,11,0)
+        QSize valueSize = QSize(itemOption.fontMetrics.horizontalAdvance(valueText), itemOption.fontMetrics.height());
+#else
         QSize valueSize = QSize(itemOption.fontMetrics.width(valueText), itemOption.fontMetrics.height());
+#endif
 
         itemOption.currentText = valueText;
         return QApplication::style()->sizeFromContents(QStyle::CT_ComboBox, &itemOption, valueSize);
@@ -155,7 +160,7 @@ CSVWorld::EnumDelegateFactory::EnumDelegateFactory (const char **names, bool all
         add (i, names[i]);
 }
 
-CSVWorld::EnumDelegateFactory::EnumDelegateFactory (const std::vector<std::string>& names,
+CSVWorld::EnumDelegateFactory::EnumDelegateFactory (const std::vector<std::pair<int,std::string>>& names,
     bool allowNone)
 {
     if (allowNone)
@@ -164,7 +169,7 @@ CSVWorld::EnumDelegateFactory::EnumDelegateFactory (const std::vector<std::strin
     int size = static_cast<int> (names.size());
 
     for (int i=0; i<size; ++i)
-        add (i, names[i].c_str());
+        add (names[i].first, names[i].second.c_str());
 }
 
 CSVWorld::CommandDelegate *CSVWorld::EnumDelegateFactory::makeDelegate (

@@ -16,6 +16,8 @@
 #include <components/debug/debuglog.hpp>
 #include <components/fallback/fallback.hpp>
 #include <components/sceneutil/lightmanager.hpp>
+#include <components/sceneutil/shadow.hpp>
+#include <components/sceneutil/vismask.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -23,9 +25,9 @@
 #include "../mwworld/inventorystore.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/weapontype.hpp"
 
 #include "npcanimation.hpp"
-#include "vismask.hpp"
 
 namespace MWRender
 {
@@ -59,7 +61,7 @@ namespace MWRender
             }
             else
             {
-                node->setNodeMask(0);
+                node->setNodeMask(SceneUtil::Mask_Disabled);
             }
         }
 
@@ -136,8 +138,9 @@ namespace MWRender
         mCamera->attach(osg::Camera::COLOR_BUFFER, mTexture);
         mCamera->setName("CharacterPreview");
         mCamera->setComputeNearFarMode(osg::Camera::COMPUTE_NEAR_FAR_USING_BOUNDING_VOLUMES);
+        mCamera->setCullMask(~(SceneUtil::Mask_UpdateVisitor));
 
-        mCamera->setNodeMask(Mask_RenderToTexture);
+        mCamera->setNodeMask(SceneUtil::Mask_RenderToTexture);
 
         osg::ref_ptr<SceneUtil::LightManager> lightManager = new SceneUtil::LightManager;
         lightManager->setStartLight(1);
@@ -152,6 +155,8 @@ namespace MWRender
         defaultMat->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 0.f));
         stateset->setAttribute(defaultMat);
 
+        SceneUtil::ShadowManager::disableShadowsForStateSet(stateset);
+
         // assign large value to effectively turn off fog
         // shaders don't respect glDisable(GL_FOG)
         osg::ref_ptr<osg::Fog> fog (new osg::Fog);
@@ -164,16 +169,15 @@ namespace MWRender
         stateset->setAttributeAndModes(lightmodel, osg::StateAttribute::ON);
 
         osg::ref_ptr<osg::Light> light = new osg::Light;
-        const Fallback::Map* fallback = MWBase::Environment::get().getWorld()->getFallback();
-        float diffuseR = fallback->getFallbackFloat("Inventory_DirectionalDiffuseR");
-        float diffuseG = fallback->getFallbackFloat("Inventory_DirectionalDiffuseG");
-        float diffuseB = fallback->getFallbackFloat("Inventory_DirectionalDiffuseB");
-        float ambientR = fallback->getFallbackFloat("Inventory_DirectionalAmbientR");
-        float ambientG = fallback->getFallbackFloat("Inventory_DirectionalAmbientG");
-        float ambientB = fallback->getFallbackFloat("Inventory_DirectionalAmbientB");
-        float azimuth = osg::DegreesToRadians(180.f - fallback->getFallbackFloat("Inventory_DirectionalRotationX"));
-        float altitude = osg::DegreesToRadians(fallback->getFallbackFloat("Inventory_DirectionalRotationY"));
-        float positionX = std::cos(azimuth) * std::sin(altitude);
+        float diffuseR = Fallback::Map::getFloat("Inventory_DirectionalDiffuseR");
+        float diffuseG = Fallback::Map::getFloat("Inventory_DirectionalDiffuseG");
+        float diffuseB = Fallback::Map::getFloat("Inventory_DirectionalDiffuseB");
+        float ambientR = Fallback::Map::getFloat("Inventory_DirectionalAmbientR");
+        float ambientG = Fallback::Map::getFloat("Inventory_DirectionalAmbientG");
+        float ambientB = Fallback::Map::getFloat("Inventory_DirectionalAmbientB");
+        float azimuth = osg::DegreesToRadians(Fallback::Map::getFloat("Inventory_DirectionalRotationX"));
+        float altitude = osg::DegreesToRadians(Fallback::Map::getFloat("Inventory_DirectionalRotationY"));
+        float positionX = -std::cos(azimuth) * std::sin(altitude);
         float positionY = std::sin(azimuth) * std::sin(altitude);
         float positionZ = std::cos(altitude);
         light->setPosition(osg::Vec4(positionX,positionY,positionZ, 0.0));
@@ -251,7 +255,7 @@ namespace MWRender
 
     void CharacterPreview::redraw()
     {
-        mCamera->setNodeMask(Mask_RenderToTexture);
+        mCamera->setNodeMask(SceneUtil::Mask_RenderToTexture);
         mDrawOnceCallback->redrawNextFrame();
     }
 
@@ -287,42 +291,36 @@ namespace MWRender
 
         MWWorld::InventoryStore &inv = mCharacter.getClass().getInventoryStore(mCharacter);
         MWWorld::ContainerStoreIterator iter = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
-        std::string groupname;
+        std::string groupname = "inventoryhandtohand";
         bool showCarriedLeft = true;
-        if(iter == inv.end())
-            groupname = "inventoryhandtohand";
-        else
+        if(iter != inv.end())
         {
-            const std::string &typeName = iter->getTypeName();
-            if(typeName == typeid(ESM::Lockpick).name() || typeName == typeid(ESM::Probe).name())
-                groupname = "inventoryweapononehand";
-            else if(typeName == typeid(ESM::Weapon).name())
+            groupname = "inventoryweapononehand";
+            if(iter->getTypeName() == typeid(ESM::Weapon).name())
             {
                 MWWorld::LiveCellRef<ESM::Weapon> *ref = iter->get<ESM::Weapon>();
-
                 int type = ref->mBase->mData.mType;
-                if(type == ESM::Weapon::ShortBladeOneHand ||
-                   type == ESM::Weapon::LongBladeOneHand ||
-                   type == ESM::Weapon::BluntOneHand ||
-                   type == ESM::Weapon::AxeOneHand ||
-                   type == ESM::Weapon::MarksmanThrown ||
-                   type == ESM::Weapon::MarksmanCrossbow ||
-                   type == ESM::Weapon::MarksmanBow)
-                    groupname = "inventoryweapononehand";
-                else if(type == ESM::Weapon::LongBladeTwoHand ||
-                        type == ESM::Weapon::BluntTwoClose ||
-                        type == ESM::Weapon::AxeTwoHand)
-                    groupname = "inventoryweapontwohand";
-                else if(type == ESM::Weapon::BluntTwoWide ||
-                        type == ESM::Weapon::SpearTwoWide)
-                    groupname = "inventoryweapontwowide";
-                else
-                    groupname = "inventoryhandtohand";
+                const ESM::WeaponType* weaponInfo = MWMechanics::getWeaponType(type);
+                showCarriedLeft = !(weaponInfo->mFlags & ESM::WeaponType::TwoHanded);
 
-                showCarriedLeft = (iter->getClass().canBeEquipped(*iter, mCharacter).first != 2);
+                std::string inventoryGroup = weaponInfo->mLongGroup;
+                inventoryGroup = "inventory" + inventoryGroup;
+
+                // We still should use one-handed animation as fallback
+                if (mAnimation->hasAnimation(inventoryGroup))
+                    groupname = inventoryGroup;
+                else
+                {
+                    static const std::string oneHandFallback = "inventory" + MWMechanics::getWeaponType(ESM::Weapon::LongBladeOneHand)->mLongGroup;
+                    static const std::string twoHandFallback = "inventory" + MWMechanics::getWeaponType(ESM::Weapon::LongBladeTwoHand)->mLongGroup;
+
+                    // For real two-handed melee weapons use 2h swords animations as fallback, otherwise use the 1h ones
+                    if (weaponInfo->mFlags & ESM::WeaponType::TwoHanded && weaponInfo->mWeaponClass == ESM::WeaponType::Melee)
+                        groupname = twoHandFallback;
+                    else
+                        groupname = oneHandFallback;
+                }
            }
-            else
-                groupname = "inventoryhandtohand";
         }
 
         mAnimation->showCarriedLeft(showCarriedLeft);
@@ -366,7 +364,7 @@ namespace MWRender
         visitor.setTraversalNumber(mDrawOnceCallback->getLastRenderedFrame());
 
         osg::Node::NodeMask nodeMask = mCamera->getNodeMask();
-        mCamera->setNodeMask(~0);
+        mCamera->setNodeMask(SceneUtil::Mask_Default);
         mCamera->accept(visitor);
         mCamera->setNodeMask(nodeMask);
 

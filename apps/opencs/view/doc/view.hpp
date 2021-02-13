@@ -85,6 +85,8 @@ namespace CSVDoc
 
             void setupDebugMenu();
 
+            void setupHelpMenu();
+
             void setupUi();
 
             void setupShortcut(const char* name, QAction* action);
@@ -138,6 +140,8 @@ namespace CSVDoc
 
             void mergeDocument (CSMDoc::Document *document);
 
+            void requestFocus (const std::string& id);
+
         public slots:
 
             void addSubView (const CSMWorld::UniversalId& id, const std::string& hint = "");
@@ -164,6 +168,10 @@ namespace CSVDoc
             void save();
 
             void exit();
+
+            void infoAbout();
+
+            void infoAboutQt();
 
             void verify();
 
@@ -256,6 +264,8 @@ namespace CSVDoc
             void moveScrollBarToEnd(int min, int max);
 
             void merge();
+
+            void onRequestFocus (const std::string& id);
     };
 }
 

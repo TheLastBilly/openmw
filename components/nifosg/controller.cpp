@@ -10,6 +10,7 @@
 
 #include <components/nif/data.hpp>
 #include <components/sceneutil/morphgeometry.hpp>
+#include <components/sceneutil/vismask.hpp>
 
 #include "userdata.hpp"
 
@@ -304,9 +305,50 @@ void VisController::operator() (osg::Node* node, osg::NodeVisitor* nv)
     {
         bool vis = calculate(getInputValue(nv));
         // Leave 0x1 enabled for UpdateVisitor, so we can make ourselves visible again in the future from this update callback
-        node->setNodeMask(vis ? ~0 : 0x1);
+        node->setNodeMask(vis ? SceneUtil::Mask_Default : SceneUtil::Mask_UpdateVisitor);
     }
     traverse(node, nv);
+}
+
+RollController::RollController(const Nif::NiFloatData *data)
+    : mData(data->mKeyList, 1.f)
+    , mStartingTime(0)
+{
+}
+
+RollController::RollController() : mStartingTime(0)
+{
+}
+
+RollController::RollController(const RollController &copy, const osg::CopyOp &copyop)
+    : osg::NodeCallback(copy, copyop)
+    , Controller(copy)
+    , mData(copy.mData)
+    , mStartingTime(0)
+{
+}
+
+void RollController::operator() (osg::Node* node, osg::NodeVisitor* nv)
+{
+    traverse(node, nv);
+
+    if (hasInput())
+    {
+        double newTime = nv->getFrameStamp()->getSimulationTime();
+        double duration = newTime - mStartingTime;
+        mStartingTime = newTime;
+
+        float value = mData.interpKey(getInputValue(nv));
+        osg::MatrixTransform* transform = static_cast<osg::MatrixTransform*>(node);
+        osg::Matrix matrix = transform->getMatrix();
+
+        // Rotate around "roll" axis.
+        // Note: in original game rotation speed is the framerate-dependent in a very tricky way.
+        // Do not replicate this behaviour until we will really need it.
+        // For now consider controller's current value as an angular speed in radians per 1/60 seconds.
+        matrix = osg::Matrix::rotate(value * duration * 60.f, 0, 0, 1) * matrix;
+        transform->setMatrix(matrix);
+    }
 }
 
 AlphaController::AlphaController(const Nif::NiFloatData *data)
@@ -344,8 +386,9 @@ void AlphaController::apply(osg::StateSet *stateset, osg::NodeVisitor *nv)
     }
 }
 
-MaterialColorController::MaterialColorController(const Nif::NiPosData *data)
+MaterialColorController::MaterialColorController(const Nif::NiPosData *data, TargetColor color)
     : mData(data->mKeyList, osg::Vec3f(1,1,1))
+    , mTargetColor(color)
 {
 }
 
@@ -356,6 +399,7 @@ MaterialColorController::MaterialColorController()
 MaterialColorController::MaterialColorController(const MaterialColorController &copy, const osg::CopyOp &copyop)
     : StateSetUpdater(copy, copyop), Controller(copy)
     , mData(copy.mData)
+    , mTargetColor(copy.mTargetColor)
 {
 }
 
@@ -372,9 +416,37 @@ void MaterialColorController::apply(osg::StateSet *stateset, osg::NodeVisitor *n
     {
         osg::Vec3f value = mData.interpKey(getInputValue(nv));
         osg::Material* mat = static_cast<osg::Material*>(stateset->getAttribute(osg::StateAttribute::MATERIAL));
-        osg::Vec4f diffuse = mat->getDiffuse(osg::Material::FRONT_AND_BACK);
-        diffuse.set(value.x(), value.y(), value.z(), diffuse.a());
-        mat->setDiffuse(osg::Material::FRONT_AND_BACK, diffuse);
+        switch (mTargetColor)
+        {
+            case Diffuse:
+            {
+                osg::Vec4f diffuse = mat->getDiffuse(osg::Material::FRONT_AND_BACK);
+                diffuse.set(value.x(), value.y(), value.z(), diffuse.a());
+                mat->setDiffuse(osg::Material::FRONT_AND_BACK, diffuse);
+                break;
+            }
+            case Specular:
+            {
+                osg::Vec4f specular = mat->getSpecular(osg::Material::FRONT_AND_BACK);
+                specular.set(value.x(), value.y(), value.z(), specular.a());
+                mat->setSpecular(osg::Material::FRONT_AND_BACK, specular);
+                break;
+            }
+            case Emissive:
+            {
+                osg::Vec4f emissive = mat->getEmission(osg::Material::FRONT_AND_BACK);
+                emissive.set(value.x(), value.y(), value.z(), emissive.a());
+                mat->setEmission(osg::Material::FRONT_AND_BACK, emissive);
+                break;
+            }
+            case Ambient:
+            default:
+            {
+                osg::Vec4f ambient = mat->getAmbient(osg::Material::FRONT_AND_BACK);
+                ambient.set(value.x(), value.y(), value.z(), ambient.a());
+                mat->setAmbient(osg::Material::FRONT_AND_BACK, ambient);
+            }
+        }
     }
 }
 

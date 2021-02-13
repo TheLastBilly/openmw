@@ -141,13 +141,16 @@ void CSVWorld::Table::contextMenuEvent (QContextMenuEvent *event)
 
         if (mModel->getFeatures() & CSMWorld::IdTableBase::Feature_Preview)
         {
+            const CSMWorld::UniversalId id = getUniversalId(currentRow);
+            const CSMWorld::UniversalId::Type type = id.getType();
+
             QModelIndex index = mModel->index (row,
                 mModel->findColumnIndex (CSMWorld::Columns::ColumnId_Modification));
 
             CSMWorld::RecordBase::State state = static_cast<CSMWorld::RecordBase::State> (
                 mModel->data (index).toInt());
 
-            if (state!=CSMWorld::RecordBase::State_Deleted)
+            if (state!=CSMWorld::RecordBase::State_Deleted && type != CSMWorld::UniversalId::Type_ItemLevelledList)
                 menu.addAction (mPreviewAction);
         }
     }
@@ -734,7 +737,12 @@ void CSVWorld::Table::requestFocus (const std::string& id)
     QModelIndex index = mProxyModel->getModelIndex (id, 0);
 
     if (index.isValid())
-        scrollTo (index, QAbstractItemView::PositionAtTop);
+    {
+        // This will scroll to the row.
+        selectRow (index.row());
+        // This will actually select it.
+        selectionModel()->select (index, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    }
 }
 
 void CSVWorld::Table::recordFilterChanged (std::shared_ptr<CSMFilter::Node> filter)

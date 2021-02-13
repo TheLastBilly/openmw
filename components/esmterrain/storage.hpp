@@ -1,6 +1,8 @@
 #ifndef COMPONENTS_ESM_TERRAIN_STORAGE_H
 #define COMPONENTS_ESM_TERRAIN_STORAGE_H
 
+#include <cassert>
+
 #include <OpenThreads/Mutex>
 
 #include <components/terrain/storage.hpp>
@@ -29,8 +31,17 @@ namespace ESMTerrain
 
         META_Object(ESMTerrain, LandObject)
 
-        const ESM::Land::LandData* getData(int flags) const;
-        int getPlugin() const;
+        inline const ESM::Land::LandData* getData(int flags) const
+        {
+            if ((mData.mDataLoaded & flags) != flags)
+                return nullptr;
+            return &mData;
+        }
+
+        inline int getPlugin() const
+        {
+            return mLand->mPlugin;
+        }
 
     private:
         const ESM::Land* mLand;
@@ -75,7 +86,7 @@ namespace ESMTerrain
         virtual void fillVertexBuffers (int lodLevel, float size, const osg::Vec2f& center,
                                 osg::ref_ptr<osg::Vec3Array> positions,
                                 osg::ref_ptr<osg::Vec3Array> normals,
-                                osg::ref_ptr<osg::Vec4Array> colours);
+                                osg::ref_ptr<osg::Vec4ubArray> colours);
 
         /// Create textures holding layer blend values for a terrain chunk.
         /// @note The terrain chunk shouldn't be larger than one cell since otherwise we might
@@ -83,14 +94,10 @@ namespace ESMTerrain
         /// @note May be called from background threads.
         /// @param chunkSize size of the terrain chunk in cell units
         /// @param chunkCenter center of the chunk in cell units
-        /// @param pack Whether to pack blend values for up to 4 layers into one texture (one in each channel) -
-        ///        otherwise, each texture contains blend values for one layer only. Shader-based rendering
-        ///        can utilize packing, FFP can't.
         /// @param blendmaps created blendmaps will be written here
         /// @param layerList names of the layer textures used will be written here
-        virtual void getBlendmaps (float chunkSize, const osg::Vec2f& chunkCenter, bool pack,
-                           ImageVector& blendmaps,
-                           std::vector<Terrain::LayerInfo>& layerList);
+        virtual void getBlendmaps (float chunkSize, const osg::Vec2f& chunkCenter, ImageVector& blendmaps,
+                               std::vector<Terrain::LayerInfo>& layerList);
 
         virtual float getHeightAt (const osg::Vec3f& worldPos);
 
@@ -102,24 +109,32 @@ namespace ESMTerrain
 
         virtual int getBlendmapScale(float chunkSize);
 
+        float getVertexHeight (const ESM::Land::LandData* data, int x, int y)
+        {
+            assert(x < ESM::Land::LAND_SIZE);
+            assert(y < ESM::Land::LAND_SIZE);
+            return data->mHeights[y * ESM::Land::LAND_SIZE + x];
+        }
+
     private:
         const VFS::Manager* mVFS;
 
-        void fixNormal (osg::Vec3f& normal, int cellX, int cellY, int col, int row, LandCache& cache);
-        void fixColour (osg::Vec4f& colour, int cellX, int cellY, int col, int row, LandCache& cache);
-        void averageNormal (osg::Vec3f& normal, int cellX, int cellY, int col, int row, LandCache& cache);
+        inline void fixNormal (osg::Vec3f& normal, int cellX, int cellY, int col, int row, LandCache& cache);
+        inline void fixColour (osg::Vec4ub& colour, int cellX, int cellY, int col, int row, LandCache& cache);
+        inline void averageNormal (osg::Vec3f& normal, int cellX, int cellY, int col, int row, LandCache& cache);
 
-        float getVertexHeight (const ESM::Land::LandData* data, int x, int y);
+        inline const LandObject* getLand(int cellX, int cellY, LandCache& cache);
 
-        const LandObject* getLand(int cellX, int cellY, LandCache& cache);
+        virtual bool useAlteration() const { return false; }
+        virtual void adjustColor(int col, int row, const ESM::Land::LandData *heightData, osg::Vec4ub& color) const;
+        virtual float getAlteredHeight(int col, int row) const;
 
         // Since plugins can define new texture palettes, we need to know the plugin index too
         // in order to retrieve the correct texture name.
         // pair  <texture id, plugin id>
         typedef std::pair<short, short> UniqueTextureId;
 
-        UniqueTextureId getVtexIndexAt(int cellX, int cellY,
-                                               int x, int y, LandCache&);
+        inline UniqueTextureId getVtexIndexAt(int cellX, int cellY, int x, int y, LandCache&);
         std::string getTextureName (UniqueTextureId id);
 
         std::map<std::string, Terrain::LayerInfo> mLayerInfoMap;

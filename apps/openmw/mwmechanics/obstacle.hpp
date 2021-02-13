@@ -1,6 +1,8 @@
 #ifndef OPENMW_MECHANICS_OBSTACLE_H
 #define OPENMW_MECHANICS_OBSTACLE_H
 
+#include <osg/Vec3f>
+
 namespace MWWorld
 {
     class Ptr;
@@ -27,37 +29,32 @@ namespace MWMechanics
             // Clear the timers and set the state machine to default
             void clear();
 
-            bool isNormalState() const;
             bool isEvading() const;
 
-            // Returns true if there is an obstacle and an evasive action
-            // should be taken
-            bool check(const MWWorld::Ptr& actor, float duration, float scaleMinimumDistance = 1.0f);
+            // Updates internal state, call each frame for moving actor
+            void update(const MWWorld::Ptr& actor, const osg::Vec3f& destination, float duration);
 
             // change direction to try to fix "stuck" actor
-            void takeEvasiveAction(MWMechanics::Movement& actorMovement);
+            void takeEvasiveAction(MWMechanics::Movement& actorMovement) const;
 
         private:
-
-            // for checking if we're stuck (ignoring Z axis)
-            float mPrevX;
-            float mPrevY;
+            osg::Vec3f mPrev;
 
             // directions to try moving in when get stuck
             static const float evadeDirections[NUM_EVADE_DIRECTIONS][2];
 
-            enum WalkState
+            enum class WalkState
             {
-                State_Norm,
-                State_CheckStuck,
-                State_Evade
+                Initial,
+                Norm,
+                CheckStuck,
+                Evade
             };
             WalkState mWalkState;
 
-            float mStuckDuration; // accumulate time here while in same spot
-            float mEvadeDuration;
-            float mDistSameSpot; // take account of actor's speed
+            float mStateDuration;
             int mEvadeDirectionIndex;
+            float mInitialDistance = 0;
 
             void chooseEvasionDirection();
     };

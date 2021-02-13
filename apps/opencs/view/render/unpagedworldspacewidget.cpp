@@ -16,7 +16,6 @@
 #include "../widget/scenetooltoggle2.hpp"
 
 #include "cameracontroller.hpp"
-#include "mask.hpp"
 #include "tagbase.hpp"
 
 void CSVRender::UnpagedWorldspaceWidget::update()
@@ -27,6 +26,11 @@ void CSVRender::UnpagedWorldspaceWidget::update()
     osg::Vec4f colour = SceneUtil::colourFromRGB(record.get().mAmbi.mAmbient);
 
     setDefaultAmbient (colour);
+
+    bool isInterior = (record.get().mData.mFlags & ESM::Cell::Interior) != 0;
+    bool behaveLikeExterior = (record.get().mData.mFlags & ESM::Cell::QuasiEx) != 0;
+
+    setExterior(behaveLikeExterior || !isInterior);
 
     /// \todo deal with mSunlight and mFog/mForDensity
 
@@ -141,6 +145,11 @@ std::string CSVRender::UnpagedWorldspaceWidget::getCellId (const osg::Vec3f& poi
 }
 
 CSVRender::Cell* CSVRender::UnpagedWorldspaceWidget::getCell(const osg::Vec3d& point) const
+{
+    return mCell.get();
+}
+
+CSVRender::Cell* CSVRender::UnpagedWorldspaceWidget::getCell(const CSMWorld::CellCoordinates& coords) const
 {
     return mCell.get();
 }
@@ -294,8 +303,8 @@ void CSVRender::UnpagedWorldspaceWidget::addVisibilitySelectorButtons (
     CSVWidget::SceneToolToggle2 *tool)
 {
     WorldspaceWidget::addVisibilitySelectorButtons (tool);
-    tool->addButton (Button_Terrain, Mask_Terrain, "Terrain", "", true);
-    tool->addButton (Button_Fog, Mask_Fog, "Fog");
+    tool->addButton (Button_Terrain, SceneUtil::Mask_Terrain, "Terrain", "", true);
+    //tool->addButton (Button_Fog, Mask_Fog, "Fog");
 }
 
 std::string CSVRender::UnpagedWorldspaceWidget::getStartupInstruction()

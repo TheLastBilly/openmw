@@ -4,6 +4,7 @@
 #include <QPoint>
 
 #include <components/sceneutil/pathgridutil.hpp>
+#include <components/sceneutil/vismask.hpp>
 
 #include "../../model/prefs/state.hpp"
 
@@ -15,7 +16,6 @@
 #include "../widget/scenetoolbar.hpp"
 
 #include "cell.hpp"
-#include "mask.hpp"
 #include "pathgrid.hpp"
 #include "pathgridselectionmode.hpp"
 #include "worldspacewidget.hpp"
@@ -23,7 +23,7 @@
 namespace CSVRender
 {
     PathgridMode::PathgridMode(WorldspaceWidget* worldspaceWidget, QWidget* parent)
-        : EditMode(worldspaceWidget, QIcon(":placeholder"), Mask_Pathgrid | Mask_Terrain | Mask_Reference,
+        : EditMode(worldspaceWidget, QIcon(":placeholder"), SceneUtil::Mask_Pathgrid | SceneUtil::Mask_Terrain | SceneUtil::Mask_EditorReference,
             getTooltip(), parent)
         , mDragMode(DragMode_None)
         , mFromNode(0)
@@ -61,6 +61,10 @@ namespace CSVRender
             delete mSelectionMode;
             mSelectionMode = 0;
         }
+    }
+
+    void PathgridMode::primaryOpenPressed(const WorldspaceHitResult& hitResult)
+    {
     }
 
     void PathgridMode::primaryEditPressed(const WorldspaceHitResult& hitResult)
@@ -106,7 +110,7 @@ namespace CSVRender
 
     void PathgridMode::primarySelectPressed(const WorldspaceHitResult& hit)
     {
-        getWorldspaceWidget().clearSelection(Mask_Pathgrid);
+        getWorldspaceWidget().clearSelection(SceneUtil::Mask_Pathgrid);
 
         if (hit.tag)
         {
@@ -127,7 +131,7 @@ namespace CSVRender
             {
                 if (tag->getPathgrid()->getId() != mLastId)
                 {
-                    getWorldspaceWidget().clearSelection(Mask_Pathgrid);
+                    getWorldspaceWidget().clearSelection(SceneUtil::Mask_Pathgrid);
                     mLastId = tag->getPathgrid()->getId();
                 }
 
@@ -138,12 +142,12 @@ namespace CSVRender
             }
         }
 
-        getWorldspaceWidget().clearSelection(Mask_Pathgrid);
+        getWorldspaceWidget().clearSelection(SceneUtil::Mask_Pathgrid);
     }
 
     bool PathgridMode::primaryEditStartDrag(const QPoint& pos)
     {
-        std::vector<osg::ref_ptr<TagBase> > selection = getWorldspaceWidget().getSelection (Mask_Pathgrid);
+        std::vector<osg::ref_ptr<TagBase> > selection = getWorldspaceWidget().getSelection (SceneUtil::Mask_Pathgrid);
 
         if (CSMPrefs::get()["3D Scene Input"]["context-select"].isTrue())
         {
@@ -152,7 +156,7 @@ namespace CSVRender
             if (dynamic_cast<PathgridTag*>(hit.tag.get()))
             {
                 primarySelectPressed(hit);
-                selection = getWorldspaceWidget().getSelection (Mask_Pathgrid);
+                selection = getWorldspaceWidget().getSelection (SceneUtil::Mask_Pathgrid);
             }
         }
 
@@ -188,7 +192,7 @@ namespace CSVRender
     {
         if (mDragMode == DragMode_Move)
         {
-            std::vector<osg::ref_ptr<TagBase> > selection = getWorldspaceWidget().getSelection(Mask_Pathgrid);
+            std::vector<osg::ref_ptr<TagBase> > selection = getWorldspaceWidget().getSelection(SceneUtil::Mask_Pathgrid);
 
             for (std::vector<osg::ref_ptr<TagBase> >::iterator it = selection.begin(); it != selection.end(); ++it)
             {
@@ -229,7 +233,7 @@ namespace CSVRender
     {
         if (mDragMode == DragMode_Move)
         {
-            std::vector<osg::ref_ptr<TagBase> > selection = getWorldspaceWidget().getSelection (Mask_Pathgrid);
+            std::vector<osg::ref_ptr<TagBase> > selection = getWorldspaceWidget().getSelection (SceneUtil::Mask_Pathgrid);
             for (std::vector<osg::ref_ptr<TagBase> >::iterator it = selection.begin(); it != selection.end(); ++it)
             {
                 if (PathgridTag* tag = dynamic_cast<PathgridTag*>(it->get()))
@@ -268,11 +272,11 @@ namespace CSVRender
         }
 
         mDragMode = DragMode_None;
-        getWorldspaceWidget().reset(Mask_Pathgrid);
+        getWorldspaceWidget().reset(SceneUtil::Mask_Pathgrid);
     }
 
     void PathgridMode::dragAborted()
     {
-        getWorldspaceWidget().reset(Mask_Pathgrid);
+        getWorldspaceWidget().reset(SceneUtil::Mask_Pathgrid);
     }
 }

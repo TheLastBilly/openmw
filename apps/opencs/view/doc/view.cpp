@@ -5,6 +5,7 @@
 
 #include <QCloseEvent>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QMdiArea>
 #include <QDockWidget>
 #include <QApplication>
@@ -14,6 +15,10 @@
 #include <QDesktopWidget>
 #include <QScrollBar>
 
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
+#include <QScreen>
+#endif
+
 #include "../../model/doc/document.hpp"
 #include "../../model/prefs/state.hpp"
 #include "../../model/prefs/shortcut.hpp"
@@ -21,9 +26,12 @@
 #include "../../model/world/idtable.hpp"
 
 #include "../world/subviews.hpp"
+#include "../world/scenesubview.hpp"
 #include "../world/tablesubview.hpp"
 
 #include "../tools/subviews.hpp"
+
+#include <components/version/version.hpp>
 
 #include "viewmanager.hpp"
 #include "operations.hpp"
@@ -303,6 +311,17 @@ void CSVDoc::View::setupDebugMenu()
     connect (runLog, SIGNAL (triggered()), this, SLOT (addRunLogSubView()));
 }
 
+void CSVDoc::View::setupHelpMenu()
+{
+    QMenu *help = menuBar()->addMenu (tr ("Help"));
+
+    QAction* about = createMenuEntry("About OpenMW-CS", ":./info.png", help, "document-help-about");
+    connect (about, SIGNAL (triggered()), this, SLOT (infoAbout()));
+
+    QAction* aboutQt = createMenuEntry("About Qt", ":./qt.png", help, "document-help-qt");
+    connect (aboutQt, SIGNAL (triggered()), this, SLOT (infoAboutQt()));
+}
+
 QAction* CSVDoc::View::createMenuEntry(CSMWorld::UniversalId::Type type, QMenu* menu, const char* shortcutName)
 {
     const std::string title = CSMWorld::UniversalId (type).getTypeName();
@@ -339,6 +358,7 @@ void CSVDoc::View::setupUi()
     setupCharacterMenu();
     setupAssetsMenu();
     setupDebugMenu();
+    setupHelpMenu();
 }
 
 void CSVDoc::View::setupShortcut(const char* name, QAction* action)
@@ -388,7 +408,7 @@ void CSVDoc::View::updateSubViewIndices(SubView *view)
 
     updateTitle();
 
-    foreach (SubView *subView, mSubViews)
+    for (SubView *subView : mSubViews)
     {
         if (!subView->isFloating())
         {
@@ -530,7 +550,7 @@ void CSVDoc::View::addSubView (const CSMWorld::UniversalId& id, const std::strin
     // User setting to reuse sub views (on a per top level view basis)
     if (windows["reuse"].isTrue())
     {
-        foreach(SubView *sb, mSubViews)
+        for (SubView *sb : mSubViews)
         {
             bool isSubViewReferenceable =
                 sb->getUniversalId().getType() == CSMWorld::UniversalId::Type_Referenceable;
@@ -611,6 +631,20 @@ void CSVDoc::View::addSubView (const CSMWorld::UniversalId& id, const std::strin
     connect (view, SIGNAL (updateSubViewIndices (SubView *)),
         this, SLOT (updateSubViewIndices (SubView *)));
 
+    CSVWorld::TableSubView* tableView = dynamic_cast<CSVWorld::TableSubView*>(view);
+    if (tableView)
+    {
+        connect (this, SIGNAL (requestFocus (const std::string&)),
+            tableView, SLOT (requestFocus (const std::string&)));
+    }
+
+    CSVWorld::SceneSubView* sceneView = dynamic_cast<CSVWorld::SceneSubView*>(view);
+    if (sceneView)
+    {
+        connect(sceneView, SIGNAL(requestFocus(const std::string&)),
+                this, SLOT(onRequestFocus(const std::string&)));
+    }
+
     view->show();
 
     if (!hint.empty())
@@ -672,6 +706,52 @@ void CSVDoc::View::newView()
 void CSVDoc::View::save()
 {
     mDocument->save();
+}
+
+void CSVDoc::View::infoAbout()
+{
+    // Get current OpenMW version
+    QString versionInfo = (Version::getOpenmwVersionDescription(mDocument->getResourceDir().string())+
+#if defined(__x86_64__) || defined(_M_X64)
+    " (64-bit)").c_str();
+#else
+    " (32-bit)").c_str();
+#endif
+
+    // Get current year
+    time_t now = time(NULL);
+    struct tm tstruct;
+    char copyrightInfo[40];
+    tstruct = *localtime(&now);
+    strftime(copyrightInfo, sizeof(copyrightInfo), "Copyright © 2008-%Y OpenMW Team", &tstruct);
+
+    QString aboutText = QString(
+    "<p style=\"white-space: pre-wrap;\">"
+    "<b><h2>OpenMW Construction Set</h2></b>"
+    "%1\n\n"
+    "%2\n\n"
+    "%3\n\n"
+    "<table>"
+    "<tr><td>%4</td><td><a href=\"https://openmw.org\">https://openmw.org</a></td></tr>"
+    "<tr><td>%5</td><td><a href=\"https://forum.openmw.org\">https://forum.openmw.org</a></td></tr>"
+    "<tr><td>%6</td><td><a href=\"https://gitlab.com/OpenMW/openmw/issues\">https://gitlab.com/OpenMW/openmw/issues</a></td></tr>"
+    "<tr><td>%7</td><td><a href=\"https://webchat.freenode.net/?channels=openmw&uio=OT10cnVlde\">irc://irc.freenode.net/#openmw</a></td></tr>"
+    "</table>"
+    "</p>")
+    .arg(versionInfo
+        , tr("OpenMW-CS is a content file editor for OpenMW, a modern, free and open source game engine.")
+        , tr(copyrightInfo)
+        , tr("Home Page:")
+        , tr("Forum:")
+        , tr("Bug Tracker:")
+        , tr("IRC:"));
+
+    QMessageBox::about(this, "About OpenMW-CS", aboutText);
+}
+
+void CSVDoc::View::infoAboutQt()
+{
+    QMessageBox::aboutQt(this);
 }
 
 void CSVDoc::View::verify()
@@ -899,7 +979,7 @@ void CSVDoc::View::resizeViewHeight (int height)
 
 void CSVDoc::View::toggleShowStatusBar (bool show)
 {
-    foreach (QObject *view, mSubViewWindow.children())
+    for (QObject *view : mSubViewWindow.children())
     {
         if (CSVDoc::SubView *subView = dynamic_cast<CSVDoc::SubView *> (view))
             subView->setStatusBar (show);
@@ -974,7 +1054,11 @@ void CSVDoc::View::updateWidth(bool isGrowLimit, int minSubViewWidth)
     if (isGrowLimit)
         rect = dw->screenGeometry(this);
     else
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
+        rect = QGuiApplication::screens().at(dw->screenNumber(this))->geometry();
+#else
         rect = dw->screenGeometry(dw->screen(dw->screenNumber(this)));
+#endif
 
     if (!mScrollbarOnly && mScroll && mSubViews.size() > 1)
     {
@@ -1003,4 +1087,17 @@ void CSVDoc::View::createScrollArea()
     mScroll->setWidgetResizable(true);
     mScroll->setWidget(&mSubViewWindow);
     setCentralWidget(mScroll);
+}
+
+void CSVDoc::View::onRequestFocus (const std::string& id)
+{
+    if(CSMPrefs::get()["3D Scene Editing"]["open-list-view"].isTrue())
+    {
+        addReferencesSubView();
+        emit requestFocus(id);
+    }
+    else
+    {
+        addSubView(CSMWorld::UniversalId (CSMWorld::UniversalId::Type_Reference, id));
+    }
 }

@@ -8,6 +8,7 @@
 #include <MyGUI_RenderManager.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_Button.h>
+#include <MyGUI_EditBox.h>
 
 #include <osg/Texture2D>
 
@@ -21,12 +22,10 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
-#include "../mwbase/scriptmanager.hpp"
 
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/actionequip.hpp"
-#include "../mwscript/interpretercontext.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/creaturestats.hpp"
@@ -90,6 +89,7 @@ namespace MWGui
         getWidget(mLeftPane, "LeftPane");
         getWidget(mRightPane, "RightPane");
         getWidget(mArmorRating, "ArmorRating");
+        getWidget(mFilterEdit, "FilterEdit");
 
         mAvatarImage->eventMouseButtonClick += MyGUI::newDelegate(this, &InventoryWindow::onAvatarClicked);
         mAvatarImage->setRenderItemTexture(mPreviewTexture.get());
@@ -104,6 +104,7 @@ namespace MWGui
         mFilterApparel->eventMouseButtonClick += MyGUI::newDelegate(this, &InventoryWindow::onFilterChanged);
         mFilterMagic->eventMouseButtonClick += MyGUI::newDelegate(this, &InventoryWindow::onFilterChanged);
         mFilterMisc->eventMouseButtonClick += MyGUI::newDelegate(this, &InventoryWindow::onFilterChanged);
+        mFilterEdit->eventEditTextChange += MyGUI::newDelegate(this, &InventoryWindow::onNameFilterChanged);
 
         mFilterAll->setStateSelected(true);
 
@@ -132,6 +133,8 @@ namespace MWGui
             mSortModel->setSourceModel(mTradeModel);
         else
             mSortModel = new SortFilterItemModel(mTradeModel);
+
+        mSortModel->setNameFilter(mFilterEdit->getCaption());
 
         mItemView->setModel(mSortModel);
 
@@ -162,28 +165,39 @@ namespace MWGui
         mItemView->setModel(nullptr);
     }
 
+    void InventoryWindow::toggleMaximized()
+    {
+        std::string setting = getModeSetting();
+
+        bool maximized = !Settings::Manager::getBool(setting + " maximized", "Windows");
+        if (maximized)
+            setting += " maximized";
+
+        MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
+        float x = Settings::Manager::getFloat(setting + " x", "Windows") * float(viewSize.width);
+        float y = Settings::Manager::getFloat(setting + " y", "Windows") * float(viewSize.height);
+        float w = Settings::Manager::getFloat(setting + " w", "Windows") * float(viewSize.width);
+        float h = Settings::Manager::getFloat(setting + " h", "Windows") * float(viewSize.height);
+        MyGUI::Window* window = mMainWidget->castType<MyGUI::Window>();
+        window->setCoord(x, y, w, h);
+
+        if (maximized)
+            Settings::Manager::setBool(setting, "Windows", maximized);
+        else
+            Settings::Manager::setBool(setting + " maximized", "Windows", maximized);
+
+        adjustPanes();
+        updatePreviewSize();
+    }
+
     void InventoryWindow::setGuiMode(GuiMode mode)
     {
-        std::string setting = "inventory";
         mGuiMode = mode;
-        switch(mode) {
-            case GM_Container:
-                setPinButtonVisible(false);
-                setting += " container";
-                break;
-            case GM_Companion:
-                setPinButtonVisible(false);
-                setting += " companion";
-                break;
-            case GM_Barter:
-                setPinButtonVisible(false);
-                setting += " barter";
-                break;
-            case GM_Inventory:
-            default:
-                setPinButtonVisible(true);
-                break;
-        }
+        std::string setting = getModeSetting();
+        setPinButtonVisible(mode == GM_Inventory);
+
+        if (Settings::Manager::getBool(setting + " maximized", "Windows"))
+            setting += " maximized";
 
         MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
         MyGUI::IntPoint pos(static_cast<int>(Settings::Manager::getFloat(setting + " x", "Windows") * viewSize.width),
@@ -377,6 +391,11 @@ namespace MWGui
 
     void InventoryWindow::onOpen()
     {
+        // Reset the filter focus when opening the window
+        MyGUI::Widget* focus = MyGUI::InputManager::getInstance().getKeyFocusWidget();
+        if (focus == mFilterEdit)
+            MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(nullptr);
+
         if (!mPtr.isEmpty())
         {
             updateEncumbranceBar();
@@ -386,11 +405,11 @@ namespace MWGui
         adjustPanes();
     }
 
-    void InventoryWindow::onWindowResize(MyGUI::Window* _sender)
+    std::string InventoryWindow::getModeSetting() const
     {
-        adjustPanes();
         std::string setting = "inventory";
-        switch(mGuiMode) {
+        switch(mGuiMode)
+        {
             case GM_Container:
                 setting += " container";
                 break;
@@ -404,6 +423,14 @@ namespace MWGui
                 break;
         }
 
+        return setting;
+    }
+
+    void InventoryWindow::onWindowResize(MyGUI::Window* _sender)
+    {
+        adjustPanes();
+        std::string setting = getModeSetting();
+
         MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
         float x = _sender->getPosition().left / float(viewSize.width);
         float y = _sender->getPosition().top / float(viewSize.height);
@@ -413,6 +440,9 @@ namespace MWGui
         Settings::Manager::setFloat(setting + " y", "Windows", y);
         Settings::Manager::setFloat(setting + " w", "Windows", w);
         Settings::Manager::setFloat(setting + " h", "Windows", h);
+        bool maximized = Settings::Manager::getBool(setting + " maximized", "Windows");
+        if (maximized)
+            Settings::Manager::setBool(setting + " maximized", "Windows", false);
 
         if (mMainWidget->getSize().width != mLastXSize || mMainWidget->getSize().height != mLastYSize)
         {
@@ -443,6 +473,12 @@ namespace MWGui
                                                                      width*mScaleFactor/float(mPreview->getTextureWidth()), height*mScaleFactor/float(mPreview->getTextureHeight())));
     }
 
+    void InventoryWindow::onNameFilterChanged(MyGUI::EditBox* _sender)
+    {
+        mSortModel->setNameFilter(_sender->getCaption());
+        mItemView->update();
+    }
+
     void InventoryWindow::onFilterChanged(MyGUI::Widget* _sender)
     {
         if (_sender == mFilterAll)
@@ -455,7 +491,6 @@ namespace MWGui
             mSortModel->setCategory(SortFilterItemModel::Category_Magic);
         else if (_sender == mFilterMisc)
             mSortModel->setCategory(SortFilterItemModel::Category_Misc);
-
         mFilterAll->setStateSelected(false);
         mFilterWeapon->setStateSelected(false);
         mFilterApparel->setStateSelected(false);
@@ -476,13 +511,25 @@ namespace MWGui
 
     void InventoryWindow::onTitleDoubleClicked()
     {
-        if (!mPinned)
+        if (MyGUI::InputManager::getInstance().isShiftPressed())
+            toggleMaximized();
+        else if (!mPinned)
             MWBase::Environment::get().getWindowManager()->toggleVisible(GW_Inventory);
     }
 
     void InventoryWindow::useItem(const MWWorld::Ptr &ptr, bool force)
     {
         const std::string& script = ptr.getClass().getScript(ptr);
+        if (!script.empty())
+        {
+            // Don't try to equip the item if PCSkipEquip is set to 1
+            if (ptr.getRefData().getLocals().getIntVar(script, "pcskipequip") == 1)
+            {
+                ptr.getRefData().getLocals().setVarByInt(script, "onpcequip", 1);
+                return;
+            }
+            ptr.getRefData().getLocals().setVarByInt(script, "onpcequip", 0);
+        }
 
         MWWorld::Ptr player = MWMechanics::getPlayer();
 
@@ -509,32 +556,21 @@ namespace MWGui
             }
         }
 
-        // If the item has a script, set its OnPcEquip to 1
-        if (!script.empty()
-                // Another morrowind oddity: when an item has skipped equipping and pcskipequip is reset to 0 afterwards,
-                // the next time it is equipped will work normally, but will not set onpcequip
-                && (ptr != mSkippedToEquip || ptr.getRefData().getLocals().getIntVar(script, "pcskipequip") == 1))
-            ptr.getRefData().getLocals().setVarByInt(script, "onpcequip", 1);
-
-        // Give the script a chance to run once before we do anything else
-        // this is important when setting pcskipequip as a reaction to onpcequip being set (bk_treasuryreport does this)
-        if (!force && !script.empty() && MWBase::Environment::get().getWorld()->getScriptsEnabled())
+        // If the item has a script, set OnPCEquip or PCSkipEquip to 1
+        if (!script.empty())
         {
-            MWScript::InterpreterContext interpreterContext (&ptr.getRefData().getLocals(), ptr);
-            MWBase::Environment::get().getScriptManager()->run (script, interpreterContext);
+            // Ingredients, books and repair hammers must not have OnPCEquip set to 1 here
+            const std::string& type = ptr.getTypeName();
+            bool isBook = type == typeid(ESM::Book).name();
+            if (!isBook && type != typeid(ESM::Ingredient).name() && type != typeid(ESM::Repair).name())
+                ptr.getRefData().getLocals().setVarByInt(script, "onpcequip", 1);
+            // Books must have PCSkipEquip set to 1 instead
+            else if (isBook)
+                ptr.getRefData().getLocals().setVarByInt(script, "pcskipequip", 1);
         }
 
-        mSkippedToEquip = MWWorld::Ptr();
-        if (ptr.getRefData().getCount()) // make sure the item is still there, the script might have removed it
-        {
-            if (script.empty() || ptr.getRefData().getLocals().getIntVar(script, "pcskipequip") == 0)
-            {
-                std::shared_ptr<MWWorld::Action> action = ptr.getClass().use(ptr, force);
-                action->execute(player);
-            }
-            else
-                mSkippedToEquip = ptr;
-        }
+        std::shared_ptr<MWWorld::Action> action = ptr.getClass().use(ptr, force);
+        action->execute(player);
 
         if (isVisible())
         {
@@ -694,7 +730,8 @@ namespace MWGui
             && (type != typeid(ESM::Potion).name()))
             return;
 
-        if (object.getClass().getName(object) == "") // objects without name presented to user can never be picked up
+        // An object that can be picked up must have a tooltip.
+        if (!object.getClass().hasToolTip(object))
             return;
 
         int count = object.getRefData().getCount();

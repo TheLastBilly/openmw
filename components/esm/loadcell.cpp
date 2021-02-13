@@ -1,7 +1,6 @@
 #include "loadcell.hpp"
 
 #include <string>
-#include <sstream>
 #include <list>
 
 #include <boost/concept_check.hpp>
@@ -111,6 +110,7 @@ namespace ESM
     void Cell::loadCell(ESMReader &esm, bool saveContext)
     {
         bool isLoaded = false;
+        mHasAmbi = false;
         while (!isLoaded && esm.hasMoreSubs())
         {
             esm.getSubName();
@@ -128,6 +128,7 @@ namespace ESM
                     break;
                 case ESM::FourCC<'A','M','B','I'>::value:
                     esm.getHT(mAmbi);
+                    mHasAmbi = true;
                     break;
                 case ESM::FourCC<'R','G','N','N'>::value:
                     mRegion = esm.getHString();
@@ -161,7 +162,7 @@ namespace ESM
 
     void Cell::save(ESMWriter &esm, bool isDeleted) const
     {
-        esm.writeHNOCString("NAME", mName);
+        esm.writeHNCString("NAME", mName);
         esm.writeHNT("DATA", mData, 12);
 
         if (isDeleted)
@@ -183,7 +184,12 @@ namespace ESM
             if (mData.mFlags & QuasiEx)
                 esm.writeHNOCString("RGNN", mRegion);
             else
-                esm.writeHNT("AMBI", mAmbi, 16);
+            {
+                // Try to avoid saving ambient lighting information when it's unnecessary.
+                // This is to fix black lighting in resaved cell records that lack this information.
+                if (mHasAmbi)
+                    esm.writeHNT("AMBI", mAmbi, 16);
+            }
         }
         else
         {
@@ -209,9 +215,7 @@ namespace ESM
         }
         else
         {
-            std::ostringstream stream;
-            stream << mData.mX << ", " << mData.mY;
-            return stream.str();
+            return std::to_string(mData.mX) + ", " + std::to_string(mData.mY);
         }
     }
 
@@ -275,6 +279,7 @@ namespace ESM
         mData.mX = 0;
         mData.mY = 0;
 
+        mHasAmbi = true;
         mAmbi.mAmbient = 0;
         mAmbi.mSunlight = 0;
         mAmbi.mFog = 0;

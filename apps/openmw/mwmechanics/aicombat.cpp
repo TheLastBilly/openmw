@@ -15,15 +15,12 @@
 #include "../mwbase/dialoguemanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 
-#include "../mwrender/animation.hpp"
-
 #include "pathgrid.hpp"
 #include "creaturestats.hpp"
 #include "steering.hpp"
 #include "movement.hpp"
 #include "character.hpp"
 #include "aicombataction.hpp"
-#include "combat.hpp"
 #include "coordinateconverter.hpp"
 #include "actorutil.hpp"
 
@@ -119,6 +116,9 @@ namespace MWMechanics
                 || target.getClass().getCreatureStats(target).isDead())
             return true;
 
+        if (actor == target) // This should never happen.
+            return true;
+
         if (!storage.isFleeing())
         {
             if (storage.mCurrentAction.get()) // need to wait to init action with its attack range
@@ -128,7 +128,7 @@ namespace MWMechanics
                 float targetReachedTolerance = 0.0f;
                 if (storage.mLOS)
                     targetReachedTolerance = storage.mAttackRange;
-                bool is_target_reached = pathTo(actor, target.getRefData().getPosition().pos, duration, targetReachedTolerance);
+                const bool is_target_reached = pathTo(actor, target.getRefData().getPosition().asVec3(), duration, targetReachedTolerance);
                 if (is_target_reached) storage.mReadyToAttack = true;
             }
 
@@ -307,7 +307,7 @@ namespace MWMechanics
                             osg::Vec3f localPos = actor.getRefData().getPosition().asVec3();
                             coords.toLocal(localPos);
 
-                            int closestPointIndex = PathFinder::GetClosestPoint(pathgrid, localPos);
+                            int closestPointIndex = PathFinder::getClosestPoint(pathgrid, localPos);
                             for (int i = 0; i < static_cast<int>(pathgrid->mPoints.size()); i++)
                             {
                                 if (i != closestPointIndex && getPathGridGraph(storage.mCell).isPointConnected(closestPointIndex, i))
@@ -359,7 +359,7 @@ namespace MWMechanics
 
                     float dist = (actor.getRefData().getPosition().asVec3() - target.getRefData().getPosition().asVec3()).length();
                     if ((dist > fFleeDistance && !storage.mLOS)
-                            || pathTo(actor, storage.mFleeDest, duration))
+                            || pathTo(actor, PathFinder::makeOsgVec3(storage.mFleeDest), duration))
                     {
                         state = AiCombatStorage::FleeState_Idle;
                     }
@@ -445,10 +445,9 @@ namespace MWMechanics
 
         if (targetClass.hasInventoryStore(target))
         {
-            MWMechanics::WeaponType weapType = WeapType_None;
-            MWWorld::ContainerStoreIterator weaponSlot =
-                MWMechanics::getActiveWeapon(targetClass.getCreatureStats(target), targetClass.getInventoryStore(target), &weapType);
-            if (weapType != WeapType_PickProbe && weapType != WeapType_Spell && weapType != WeapType_None && weapType != WeapType_HandToHand)
+            int weapType = ESM::Weapon::None;
+            MWWorld::ContainerStoreIterator weaponSlot = MWMechanics::getActiveWeapon(target, &weapType);
+            if (weapType > ESM::Weapon::None)
                 targetWeapon = *weaponSlot;
         }
 
@@ -555,13 +554,13 @@ namespace MWMechanics
                 if (actor.getClass().isNpc())
                 {
                     baseDelay = store.get<ESM::GameSetting>().find("fCombatDelayNPC")->mValue.getFloat();
+                }
 
-                    //say a provoking combat phrase
-                    int chance = store.get<ESM::GameSetting>().find("iVoiceAttackOdds")->mValue.getInteger();
-                    if (Misc::Rng::roll0to99() < chance)
-                    {
-                        MWBase::Environment::get().getDialogueManager()->say(actor, "attack");
-                    }
+                // Say a provoking combat phrase
+                const int iVoiceAttackOdds = store.get<ESM::GameSetting>().find("iVoiceAttackOdds")->mValue.getInteger();
+                if (Misc::Rng::roll0to99() < iVoiceAttackOdds)
+                {
+                    MWBase::Environment::get().getDialogueManager()->say(actor, "attack");
                 }
                 mAttackCooldown = std::min(baseDelay + 0.01 * Misc::Rng::roll0to99(), baseDelay + 0.9);
             }
@@ -645,7 +644,7 @@ osg::Vec3f AimDirToMovingTarget(const MWWorld::Ptr& actor, const MWWorld::Ptr& t
     const MWWorld::Store<ESM::GameSetting>& gmst = MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>();
 
     // get projectile speed (depending on weapon type)
-    if (weapType == ESM::Weapon::MarksmanThrown)
+    if (MWMechanics::getWeaponType(weapType)->mWeaponClass == ESM::WeaponType::Thrown)
     {
         static float fThrownWeaponMinSpeed = gmst.find("fThrownWeaponMinSpeed")->mValue.getFloat();
         static float fThrownWeaponMaxSpeed = gmst.find("fThrownWeaponMaxSpeed")->mValue.getFloat();

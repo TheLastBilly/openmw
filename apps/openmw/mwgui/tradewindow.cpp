@@ -3,6 +3,7 @@
 #include <MyGUI_Button.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_ControllerManager.h>
+#include <MyGUI_ControllerRepeatClick.h>
 
 #include <components/widgets/numericeditbox.hpp>
 
@@ -44,9 +45,6 @@ namespace
 
 namespace MWGui
 {
-    const float TradeWindow::sBalanceChangeInitialPause = 0.5f;
-    const float TradeWindow::sBalanceChangeInterval = 0.1f;
-
     TradeWindow::TradeWindow()
         : WindowBase("openmw_trade_window.layout")
         , mSortModel(nullptr)
@@ -71,6 +69,7 @@ namespace MWGui
         getWidget(mTotalBalance, "TotalBalance");
         getWidget(mTotalBalanceLabel, "TotalBalanceLabel");
         getWidget(mBottomPane, "BottomPane");
+        getWidget(mFilterEdit, "FilterEdit");
 
         getWidget(mItemView, "ItemView");
         mItemView->eventItemClicked += MyGUI::newDelegate(this, &TradeWindow::onItemSelected);
@@ -82,6 +81,7 @@ namespace MWGui
         mFilterApparel->eventMouseButtonClick += MyGUI::newDelegate(this, &TradeWindow::onFilterChanged);
         mFilterMagic->eventMouseButtonClick += MyGUI::newDelegate(this, &TradeWindow::onFilterChanged);
         mFilterMisc->eventMouseButtonClick += MyGUI::newDelegate(this, &TradeWindow::onFilterChanged);
+        mFilterEdit->eventEditTextChange += MyGUI::newDelegate(this, &TradeWindow::onNameFilterChanged);
 
         mCancelButton->eventMouseButtonClick += MyGUI::newDelegate(this, &TradeWindow::onCancelButtonClicked);
         mOfferButton->eventMouseButtonClick += MyGUI::newDelegate(this, &TradeWindow::onOfferButtonClicked);
@@ -106,9 +106,9 @@ namespace MWGui
         // Also restock any containers owned by this merchant, which are also available to buy in the trade window
         std::vector<MWWorld::Ptr> itemSources;
         MWBase::Environment::get().getWorld()->getContainersOwnedBy(mPtr, itemSources);
-        for (std::vector<MWWorld::Ptr>::iterator it = itemSources.begin(); it != itemSources.end(); ++it)
+        for (MWWorld::Ptr& source : itemSources)
         {
-            it->getClass().restock(*it);
+            source.getClass().restock(source);
         }
     }
 
@@ -137,13 +137,18 @@ namespace MWGui
         setTitle(actor.getClass().getName(actor));
 
         onFilterChanged(mFilterAll);
-
-        MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mTotalBalance);
+        mFilterEdit->setCaption("");
     }
 
     void TradeWindow::onFrame(float dt)
     {
         checkReferenceAvailable();
+    }
+
+    void TradeWindow::onNameFilterChanged(MyGUI::EditBox* _sender)
+    {
+        mSortModel->setNameFilter(_sender->getCaption());
+        mItemView->update();
     }
 
     void TradeWindow::onFilterChanged(MyGUI::Widget* _sender)
@@ -306,16 +311,15 @@ namespace MWGui
         }
 
         // check if the player is attempting to sell back an item stolen from this actor
-        for (std::vector<ItemStack>::iterator it = merchantBought.begin(); it != merchantBought.end(); ++it)
+        for (ItemStack& itemStack : merchantBought)
         {
-            if (MWBase::Environment::get().getMechanicsManager()->isItemStolenFrom(it->mBase.getCellRef().getRefId(), mPtr))
+            if (MWBase::Environment::get().getMechanicsManager()->isItemStolenFrom(itemStack.mBase.getCellRef().getRefId(), mPtr))
             {
                 std::string msg = gmst.find("sNotifyMessage49")->mValue.getString();
-                if (msg.find("%s") != std::string::npos)
-                    msg.replace(msg.find("%s"), 2, it->mBase.getClass().getName(it->mBase));
+                msg = Misc::StringUtils::format(msg, itemStack.mBase.getClass().getName(itemStack.mBase));
                 MWBase::Environment::get().getWindowManager()->messageBox(msg);
 
-                MWBase::Environment::get().getMechanicsManager()->confiscateStolenItemToOwner(player, it->mBase, mPtr, it->mCount);
+                MWBase::Environment::get().getMechanicsManager()->confiscateStolenItemToOwner(player, itemStack.mBase, mPtr, itemStack.mCount);
 
                 onCancelButtonClicked(mCancelButton);
                 MWBase::Environment::get().getWindowManager()->exitCurrentGuiMode();
@@ -383,10 +387,9 @@ namespace MWGui
 
     void TradeWindow::addRepeatController(MyGUI::Widget *widget)
     {
-        MyGUI::ControllerItem* item = MyGUI::ControllerManager::getInstance().createItem(Controllers::ControllerRepeatEvent::getClassTypeName());
-        Controllers::ControllerRepeatEvent* controller = item->castType<Controllers::ControllerRepeatEvent>();
-        controller->eventRepeatClick += MyGUI::newDelegate(this, &TradeWindow::onRepeatClick);
-        controller->setRepeat(sBalanceChangeInitialPause, sBalanceChangeInterval);
+        MyGUI::ControllerItem* item = MyGUI::ControllerManager::getInstance().createItem(MyGUI::ControllerRepeatClick::getClassTypeName());
+        MyGUI::ControllerRepeatClick* controller = static_cast<MyGUI::ControllerRepeatClick*>(item);
+        controller->eventRepeatClick += newDelegate(this, &TradeWindow::onRepeatClick);
         MyGUI::ControllerManager::getInstance().addItem(widget, controller);
     }
 
@@ -469,16 +472,26 @@ namespace MWGui
 
         int merchantOffer = 0;
 
+        // The offered price must be capped at 75% of the base price to avoid exploits
+        // connected to buying and selling the same item.
+        // This value has been determined by researching the limitations of the vanilla formula
+        // and may not be sufficient if getBarterOffer behavior has been changed.
         std::vector<ItemStack> playerBorrowed = playerTradeModel->getItemsBorrowedToUs();
-        for (std::vector<ItemStack>::const_iterator it = playerBorrowed.begin(); it != playerBorrowed.end(); ++it)
+        for (const ItemStack& itemStack : playerBorrowed)
         {
-            merchantOffer -= MWBase::Environment::get().getMechanicsManager()->getBarterOffer(mPtr, getEffectiveValue(it->mBase, it->mCount), true);
+            const int basePrice = getEffectiveValue(itemStack.mBase, itemStack.mCount);
+            const int cap = static_cast<int>(std::max(1.f, 0.75f * basePrice)); // Minimum buying price -- 75% of the base
+            const int buyingPrice = MWBase::Environment::get().getMechanicsManager()->getBarterOffer(mPtr, basePrice, true);
+            merchantOffer -= std::max(cap, buyingPrice);
         }
 
         std::vector<ItemStack> merchantBorrowed = mTradeModel->getItemsBorrowedToUs();
-        for (std::vector<ItemStack>::const_iterator it = merchantBorrowed.begin(); it != merchantBorrowed.end(); ++it)
+        for (const ItemStack& itemStack : merchantBorrowed)
         {
-            merchantOffer += MWBase::Environment::get().getMechanicsManager()->getBarterOffer(mPtr, getEffectiveValue(it->mBase, it->mCount), false);
+            const int basePrice = getEffectiveValue(itemStack.mBase, itemStack.mCount);
+            const int cap = static_cast<int>(std::max(1.f, 0.75f * basePrice)); // Maximum selling price -- 75% of the base
+            const int sellingPrice = MWBase::Environment::get().getMechanicsManager()->getBarterOffer(mPtr, basePrice, false);
+            merchantOffer += mPtr.getClass().isNpc() ? std::min(cap, sellingPrice) : sellingPrice;
         }
 
         int diff = merchantOffer - mCurrentMerchantOffer;

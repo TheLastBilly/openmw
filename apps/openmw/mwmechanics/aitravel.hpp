@@ -3,8 +3,6 @@
 
 #include "aipackage.hpp"
 
-#include "pathfinding.hpp"
-
 namespace ESM
 {
 namespace AiSequence
@@ -33,6 +31,12 @@ namespace MWMechanics
             virtual bool execute (const MWWorld::Ptr& actor, CharacterController& characterController, AiState& state, float duration);
 
             virtual int getTypeId() const;
+
+            virtual bool useVariableSpeed() const { return true;}
+
+            virtual bool alwaysActive() const { return true; }
+
+            virtual osg::Vec3f getDestination() const { return osg::Vec3f(mX, mY, mZ); }
 
         private:
             float mX;

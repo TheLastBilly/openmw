@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <sstream>
+#include <string>
 
 #include <QMouseEvent>
 #include <QApplication>
@@ -20,10 +21,10 @@
 #include "../widget/scenetooltoggle2.hpp"
 
 #include "editmode.hpp"
-#include "mask.hpp"
 #include "cameracontroller.hpp"
 #include "cellarrow.hpp"
 #include "terraintexturemode.hpp"
+#include "terrainshapemode.hpp"
 
 bool CSVRender::PagedWorldspaceWidget::adjustCells()
 {
@@ -125,8 +126,8 @@ void CSVRender::PagedWorldspaceWidget::addVisibilitySelectorButtons (
     CSVWidget::SceneToolToggle2 *tool)
 {
     WorldspaceWidget::addVisibilitySelectorButtons (tool);
-    tool->addButton (Button_Terrain, Mask_Terrain, "Terrain");
-    tool->addButton (Button_Fog, Mask_Fog, "Fog", "", true);
+    tool->addButton (Button_Terrain, SceneUtil::Mask_Terrain, "Terrain");
+    //tool->addButton (Button_Fog, Mask_Fog, "Fog", "", true);
 }
 
 void CSVRender::PagedWorldspaceWidget::addEditModeSelectorButtons (
@@ -136,22 +137,20 @@ void CSVRender::PagedWorldspaceWidget::addEditModeSelectorButtons (
 
     /// \todo replace EditMode with suitable subclasses
     tool->addButton (
-        new EditMode (this, QIcon (":placeholder"), Mask_Reference, "Terrain shape editing"),
-        "terrain-shape");
+        new TerrainShapeMode (this, mRootNode, tool), "terrain-shape");
     tool->addButton (
-        new TerrainTextureMode (this, tool),
-        "terrain-texture");
+        new TerrainTextureMode (this, mRootNode, tool), "terrain-texture");
     tool->addButton (
-        new EditMode (this, QIcon (":placeholder"), Mask_Reference, "Terrain vertex paint editing"),
+        new EditMode (this, QIcon (":placeholder"), SceneUtil::Mask_EditorReference, "Terrain vertex paint editing"),
         "terrain-vertex");
     tool->addButton (
-        new EditMode (this, QIcon (":placeholder"), Mask_Reference, "Terrain movement"),
+        new EditMode (this, QIcon (":placeholder"), SceneUtil::Mask_EditorReference, "Terrain movement"),
         "terrain-move");
 }
 
 void CSVRender::PagedWorldspaceWidget::handleInteractionPress (const WorldspaceHitResult& hit, InteractionType type)
 {
-    if (hit.tag && hit.tag->getMask()==Mask_CellArrow)
+    if (hit.tag && hit.tag->getMask()==SceneUtil::Mask_EditorCellArrow)
     {
         if (CellArrowTag *cellArrowTag = dynamic_cast<CSVRender::CellArrowTag *> (hit.tag.get()))
         {
@@ -615,7 +614,39 @@ void CSVRender::PagedWorldspaceWidget::useViewHint (const std::string& hint)
         }
         else if (hint[0]=='r')
         {
-            /// \todo implement 'r' type hints
+            // syntax r:ref#number (e.g. r:ref#100)
+            char ignore;
+
+            std::istringstream stream (hint.c_str());
+            if (stream >> ignore) // ignore r
+            {
+                char ignore1; // : or ;
+
+                std::string refCode; // ref#number (e.g. ref#100)
+
+                while (stream >> ignore1 >> refCode) {}
+
+                //Find out cell coordinate
+                CSMWorld::IdTable& references = dynamic_cast<CSMWorld::IdTable&> (
+                    *mDocument.getData().getTableModel (CSMWorld::UniversalId::Type_References));
+                int cellColumn = references.findColumnIndex(CSMWorld::Columns::ColumnId_Cell);
+                QVariant cell = references.data(references.getModelIndex(refCode, cellColumn)).value<QVariant>();
+                QString cellqs = cell.toString();
+                std::istringstream streamCellCoord (cellqs.toStdString().c_str());
+
+                if (streamCellCoord >> ignore) //ignore #
+                {
+                    // Current coordinate
+                    int x, y;
+
+                    // Loop through all the coordinates to add them to selection
+                    while (streamCellCoord >> x >> y)
+                        selection.add (CSMWorld::CellCoordinates (x, y));
+
+                    // Mark that camera needs setup
+                    mCamPositionSet=false;
+                }
+            }
         }
 
         setCellSelection (selection);
@@ -758,6 +789,36 @@ CSVRender::Cell* CSVRender::PagedWorldspaceWidget::getCell(const osg::Vec3d& poi
         return 0;
 }
 
+CSVRender::Cell* CSVRender::PagedWorldspaceWidget::getCell(const CSMWorld::CellCoordinates& coords) const
+{
+    std::map<CSMWorld::CellCoordinates, Cell*>::const_iterator searchResult = mCells.find(coords);
+    if (searchResult != mCells.end())
+        return searchResult->second;
+    else
+        return nullptr;
+}
+
+void CSVRender::PagedWorldspaceWidget::setCellAlteredHeight(const CSMWorld::CellCoordinates& coords, int inCellX, int inCellY, float height)
+{
+    std::map<CSMWorld::CellCoordinates, Cell*>::iterator searchResult = mCells.find(coords);
+    if (searchResult != mCells.end())
+        searchResult->second->setAlteredHeight(inCellX, inCellY, height);
+}
+
+float* CSVRender::PagedWorldspaceWidget::getCellAlteredHeight(const CSMWorld::CellCoordinates& coords, int inCellX, int inCellY)
+{
+    std::map<CSMWorld::CellCoordinates, Cell*>::iterator searchResult = mCells.find(coords);
+    if (searchResult != mCells.end())
+        return searchResult->second->getAlteredHeight(inCellX, inCellY);
+    return nullptr;
+}
+
+void CSVRender::PagedWorldspaceWidget::resetAllAlteredHeights()
+{
+    for (const auto& cell : mCells)
+        cell.second->resetAlteredHeights();
+}
+
 std::vector<osg::ref_ptr<CSVRender::TagBase> > CSVRender::PagedWorldspaceWidget::getSelection (
     unsigned int elementMask) const
 {
@@ -812,9 +873,9 @@ CSVWidget::SceneToolToggle2 *CSVRender::PagedWorldspaceWidget::makeControlVisibi
     mControlElements = new CSVWidget::SceneToolToggle2 (parent,
         "Controls & Guides Visibility", ":scenetoolbar/scene-view-marker-c", ":scenetoolbar/scene-view-marker-");
 
-    mControlElements->addButton (1, Mask_CellMarker, "Cell Marker");
-    mControlElements->addButton (2, Mask_CellArrow, "Cell Arrows");
-    mControlElements->addButton (4, Mask_CellBorder, "Cell Border");
+    mControlElements->addButton (1, SceneUtil::Mask_EditorCellMarker, "Cell Marker");
+    mControlElements->addButton (2, SceneUtil::Mask_EditorCellArrow, "Cell Arrows");
+    mControlElements->addButton (4, SceneUtil::Mask_EditorCellBorder, "Cell Border");
 
     mControlElements->setSelectionMask (0xffffffff);
 

@@ -1,9 +1,9 @@
 #include <algorithm>
-#include <stdexcept>
 #include <cstring>
 #include <vector>
 #include <memory>
 #include <array>
+#include <atomic>
 
 #include <stdint.h>
 
@@ -279,7 +279,7 @@ private:
 
     std::unique_ptr<Sound_Loudness> mLoudnessAnalyzer;
 
-    volatile bool mIsFinished;
+    std::atomic<bool> mIsFinished;
 
     void updateAll(bool local);
 
@@ -313,7 +313,7 @@ struct OpenAL_Output::StreamThread : public OpenThreads::Thread {
     typedef std::vector<OpenAL_SoundStream*> StreamVec;
     StreamVec mStreams;
 
-    volatile bool mQuitNow;
+    std::atomic<bool> mQuitNow;
     OpenThreads::Mutex mMutex;
     OpenThreads::Condition mCondVar;
 
@@ -798,7 +798,7 @@ bool OpenAL_Output::init(const std::string &devname, const std::string &hrtfname
                 if(alGetError() == AL_NO_ERROR)
                     Log(Debug::Info) << "Standard Reverb supported";
             }
-            EFXEAXREVERBPROPERTIES props = EFX_REVERB_PRESET_GENERIC;
+            EFXEAXREVERBPROPERTIES props = EFX_REVERB_PRESET_LIVINGROOM;
             props.flGain = 0.0f;
             LoadEffect(mDefaultEffect, props);
         }
@@ -1247,7 +1247,7 @@ void OpenAL_Output::updateSound(Sound *sound)
 }
 
 
-bool OpenAL_Output::streamSound(DecoderPtr decoder, Stream *sound)
+bool OpenAL_Output::streamSound(DecoderPtr decoder, Stream *sound, bool getLoudnessData)
 {
     if(mFreeSources.empty())
     {
@@ -1265,7 +1265,7 @@ bool OpenAL_Output::streamSound(DecoderPtr decoder, Stream *sound)
         return false;
 
     OpenAL_SoundStream *stream = new OpenAL_SoundStream(source, std::move(decoder));
-    if(!stream->init())
+    if(!stream->init(getLoudnessData))
     {
         delete stream;
         return false;
@@ -1454,6 +1454,38 @@ void OpenAL_Output::pauseSounds(int types)
     }
 }
 
+void OpenAL_Output::pauseActiveDevice()
+{
+    if (mDevice == nullptr)
+        return;
+
+    if(alcIsExtensionPresent(mDevice, "ALC_SOFT_PAUSE_DEVICE"))
+    {
+        LPALCDEVICEPAUSESOFT alcDevicePauseSOFT = 0;
+        getALCFunc(alcDevicePauseSOFT, mDevice, "alcDevicePauseSOFT");
+        alcDevicePauseSOFT(mDevice);
+        getALCError(mDevice);
+    }
+
+    alListenerf(AL_GAIN, 0.0f);
+}
+
+void OpenAL_Output::resumeActiveDevice()
+{
+    if (mDevice == nullptr)
+        return;
+
+    if(alcIsExtensionPresent(mDevice, "ALC_SOFT_PAUSE_DEVICE"))
+    {
+        LPALCDEVICERESUMESOFT alcDeviceResumeSOFT = 0;
+        getALCFunc(alcDeviceResumeSOFT, mDevice, "alcDeviceResumeSOFT");
+        alcDeviceResumeSOFT(mDevice);
+        getALCError(mDevice);
+    }
+
+    alListenerf(AL_GAIN, 1.0f);
+}
+
 void OpenAL_Output::resumeSounds(int types)
 {
     std::vector<ALuint> sources;
@@ -1489,7 +1521,7 @@ OpenAL_Output::OpenAL_Output(SoundManager &mgr)
 
 OpenAL_Output::~OpenAL_Output()
 {
-    deinit();
+    OpenAL_Output::deinit();
 }
 
 }

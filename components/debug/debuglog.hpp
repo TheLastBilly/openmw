@@ -4,6 +4,8 @@
 #include <mutex>
 #include <iostream>
 
+#include <osg/io_utils>
+
 namespace Debug
 {
     enum Level
@@ -12,9 +14,10 @@ namespace Debug
         Warning = 2,
         Info = 3,
         Verbose = 4,
-        Marker = Verbose,
+        Debug = 5,
+        Marker = Debug,
 
-        NoLevel = 5 // Do not filter messages in this case
+        NoLevel = 6 // Do not filter messages in this case
     };
 
     extern Level CurrentDebugLevel;

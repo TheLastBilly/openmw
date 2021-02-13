@@ -31,6 +31,8 @@ namespace MWRender
         virtual void equipmentChanged() { updateParts(); }
 
         virtual void showWeapons(bool showWeapon);
+
+        virtual bool getCarriedLeftShown() const { return mShowCarriedLeft; }
         virtual void showCarriedLeft(bool show);
 
         void updateParts();
@@ -44,7 +46,7 @@ namespace MWRender
         virtual osg::Node* getWeaponNode();
         virtual Resource::ResourceSystem* getResourceSystem();
         virtual void showWeapon(bool show) { showWeapons(show); }
-        virtual void setWeaponGroup(const std::string& group) { mWeaponAnimationTime->setGroup(group); }
+        virtual void setWeaponGroup(const std::string& group, bool relativeDuration) { mWeaponAnimationTime->setGroup(group, relativeDuration); }
 
         virtual void addControllers();
 
@@ -54,6 +56,8 @@ namespace MWRender
         /// to indicate the facing orientation of the character.
         virtual void setPitchFactor(float factor) { mPitchFactor = factor; }
 
+    protected:
+        virtual bool isArrowAttached() const;
 
     private:
         PartHolderPtr mWeapon;

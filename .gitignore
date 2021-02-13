@@ -81,5 +81,14 @@ moc_*.cxx
 *ui_playpage.h
 *.[ao]
 *.so
-openmw.appdata.xml
 venv/
+
+## recastnavigation unused files
+extern/recastnavigation/.travis.yml
+extern/recastnavigation/CONTRIBUTING.md
+extern/recastnavigation/Docs/
+extern/recastnavigation/Doxyfile
+extern/recastnavigation/README.md
+extern/recastnavigation/RecastDemo/
+extern/recastnavigation/Tests/
+extern/recastnavigation/appveyor.yml

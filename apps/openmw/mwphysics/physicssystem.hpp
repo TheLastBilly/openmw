@@ -4,6 +4,7 @@
 #include <memory>
 #include <map>
 #include <set>
+#include <algorithm>
 
 #include <osg/Quat>
 #include <osg/ref_ptr>
@@ -85,6 +86,8 @@ namespace MWPhysics
 
             void removeHeightField (int x, int y);
 
+            const HeightField* getHeightField(int x, int y) const;
+
             bool toggleCollisionMode();
 
             void stepSimulation(float dt);
@@ -130,6 +133,9 @@ namespace MWPhysics
             /// Get physical half extents (scaled) of the given actor.
             osg::Vec3f getHalfExtents(const MWWorld::ConstPtr& actor) const;
 
+            /// Get physical half extents (not scaled) of the given actor.
+            osg::Vec3f getOriginalHalfExtents(const MWWorld::ConstPtr& actor) const;
+
             /// @see MWPhysics::Actor::getRenderingHalfExtents
             osg::Vec3f getRenderingHalfExtents(const MWWorld::ConstPtr& actor) const;
 
@@ -169,6 +175,16 @@ namespace MWPhysics
             void markAsNonSolid (const MWWorld::ConstPtr& ptr);
 
             bool isOnSolidGround (const MWWorld::Ptr& actor) const;
+
+            void updateAnimatedCollisionShape(const MWWorld::Ptr& object);
+
+            template <class Function>
+            void forEachAnimatedObject(Function&& function) const
+            {
+                std::for_each(mAnimatedObjects.begin(), mAnimatedObjects.end(), function);
+            }
+
+            bool isAreaOccupiedByOtherActor(const osg::Vec3f& position, const float radius, const MWWorld::ConstPtr& ignore) const;
 
         private:
 

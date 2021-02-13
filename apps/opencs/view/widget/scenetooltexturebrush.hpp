@@ -14,9 +14,12 @@
 #include <QHBoxLayout>
 #include <QPushButton>
 
+#ifndef Q_MOC_RUN
+#include "brushshapes.hpp"
 #include "scenetool.hpp"
 
 #include "../../model/doc/document.hpp"
+#endif
 
 class QTableWidget;
 
@@ -63,9 +66,9 @@ namespace CSVWidget
             const QString toolTipCustom = "Paint custom selection (not implemented yet)";
 
         private:
-            int mBrushShape;
-            int mBrushSize;
-            std::string mBrushTexture;
+            CSVWidget::BrushShape mBrushShape = CSVWidget::BrushShape_Point;
+            int mBrushSize = 1;
+            std::string mBrushTexture = "L0#0";
             CSMDoc::Document& mDocument;
             QLabel *mSelectedBrush;
             QGroupBox *mHorizontalGroupBox;
@@ -86,7 +89,7 @@ namespace CSVWidget
 
         signals:
             void passBrushSize (int brushSize);
-            void passBrushShape(int brushShape);
+            void passBrushShape(CSVWidget::BrushShape brushShape);
             void passTextureId(std::string brushTexture);
     };
 
@@ -118,7 +121,7 @@ namespace CSVWidget
         friend class CSVRender::TerrainTextureMode;
 
         public slots:
-            void setButtonIcon(int brushShape);
+            void setButtonIcon(CSVWidget::BrushShape brushShape);
             void updateBrushHistory (const std::string& mBrushTexture);
             void clicked (const QModelIndex& index);
             virtual void activate();

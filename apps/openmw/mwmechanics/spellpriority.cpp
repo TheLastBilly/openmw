@@ -3,6 +3,7 @@
 
 #include <components/esm/loadench.hpp>
 #include <components/esm/loadmgef.hpp>
+#include <components/esm/loadspel.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -11,11 +12,11 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
-#include "../mwworld/actionequip.hpp"
 #include "../mwworld/cellstore.hpp"
 
 #include "creaturestats.hpp"
 #include "spellcasting.hpp"
+#include "weapontype.hpp"
 #include "combat.hpp"
 
 namespace
@@ -122,9 +123,6 @@ namespace MWMechanics
             if (race->mPowers.exists(spell->mId))
                 return 0.f;
         }
-
-        if (spell->mData.mCost > stats.getMagicka().getCurrent())
-            return 0.f;
 
         // Spells don't stack, so early out if the spell is still active on the target
         int types = getRangeTypes(spell->mEffects);
@@ -380,7 +378,7 @@ namespace MWMechanics
 
         case ESM::MagicEffect::BoundLongbow:
             // AI should not summon the bow if there is no suitable ammo.
-            if (rateAmmo(actor, enemy, ESM::Weapon::Arrow) <= 0.f)
+            if (rateAmmo(actor, enemy, getWeaponType(ESM::Weapon::MarksmanBow)->mAmmoType) <= 0.f)
                 return 0.f;
             break;
 

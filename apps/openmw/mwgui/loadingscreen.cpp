@@ -14,13 +14,12 @@
 #include <components/myguiplatform/myguitexture.hpp>
 #include <components/settings/settings.hpp>
 #include <components/vfs/manager.hpp>
+#include <components/sceneutil/vismask.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/inputmanager.hpp"
-
-#include "../mwrender/vismask.hpp"
 
 #include "backgroundimage.hpp"
 
@@ -133,22 +132,23 @@ namespace MWGui
     public:
         CopyFramebufferToTextureCallback(osg::Texture2D* texture)
             : mTexture(texture)
+            , oneshot(true)
         {
         }
 
         virtual void operator () (osg::RenderInfo& renderInfo) const
         {
+            if (!oneshot)
+                return;
+            oneshot = false;
             int w = renderInfo.getCurrentCamera()->getViewport()->width();
             int h = renderInfo.getCurrentCamera()->getViewport()->height();
             mTexture->copyTexImage2D(*renderInfo.getState(), 0, 0, w, h);
-
-            // Callback removes itself when done
-            if (renderInfo.getCurrentCamera())
-                renderInfo.getCurrentCamera()->setInitialDrawCallback(nullptr);
         }
 
     private:
         osg::ref_ptr<osg::Texture2D> mTexture;
+        mutable bool oneshot;
     };
 
     class DontComputeBoundCallback : public osg::Node::ComputeBoundingSphereCallback
@@ -163,11 +163,6 @@ namespace MWGui
         // Early-out if already on
         if (mMainWidget->getVisible())
             return;
-
-        if (mViewer->getIncrementalCompileOperation())
-        {
-            mViewer->getIncrementalCompileOperation()->setMaximumNumOfObjectsToCompilePerFrame(100);
-        }
 
         // Assign dummy bounding sphere callback to avoid the bounding sphere of the entire scene being recomputed after each frame of loading
         // We are already using node masks to avoid the scene from being updated/rendered, but node masks don't work for computeBound()
@@ -308,6 +303,8 @@ namespace MWGui
             mGuiTexture.reset(new osgMyGUI::OSGTexture(mTexture));
         }
 
+        // Notice that the next time this is called, the current CopyFramebufferToTextureCallback will be deleted
+        // so there's no memory leak as at most one object of type CopyFramebufferToTextureCallback is allocated at a time.
         mViewer->getCamera()->setInitialDrawCallback(new CopyFramebufferToTextureCallback(mTexture));
 
         mBackgroundImage->setBackgroundImage("");
@@ -337,8 +334,8 @@ namespace MWGui
         // Turn off rendering except the GUI
         int oldUpdateMask = mViewer->getUpdateVisitor()->getTraversalMask();
         int oldCullMask = mViewer->getCamera()->getCullMask();
-        mViewer->getUpdateVisitor()->setTraversalMask(MWRender::Mask_GUI|MWRender::Mask_PreCompile);
-        mViewer->getCamera()->setCullMask(MWRender::Mask_GUI|MWRender::Mask_PreCompile);
+        mViewer->getUpdateVisitor()->setTraversalMask(SceneUtil::Mask_GUI|SceneUtil::Mask_PreCompile);
+        mViewer->getCamera()->setCullMask(SceneUtil::Mask_GUI|SceneUtil::Mask_PreCompile);
 
         MWBase::Environment::get().getInputManager()->update(0, true, true);
 

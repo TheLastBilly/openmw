@@ -26,18 +26,20 @@
 
 #include <components/compiler/extensions0.hpp>
 
+#include <components/sceneutil/vismask.hpp>
 #include <components/sceneutil/workqueue.hpp>
 
 #include <components/files/configurationmanager.hpp>
 
 #include <components/version/version.hpp>
 
+#include <components/detournavigator/navigator.hpp>
+
 #include "mwinput/inputmanagerimp.hpp"
 
 #include "mwgui/windowmanagerimp.hpp"
 
 #include "mwscript/scriptmanagerimp.hpp"
-#include "mwscript/extensions.hpp"
 #include "mwscript/interpretercontext.hpp"
 
 #include "mwsound/soundmanagerimp.hpp"
@@ -45,8 +47,6 @@
 #include "mwworld/class.hpp"
 #include "mwworld/player.hpp"
 #include "mwworld/worldimp.hpp"
-
-#include "mwrender/vismask.hpp"
 
 #include "mwclass/classes.hpp"
 
@@ -96,7 +96,12 @@ bool OMW::Engine::frame(float frametime)
         // If we are not currently rendering, then RenderItems will not be reused resulting in a memory leak upon changing widget textures (fixed in MyGUI 3.3.2),
         // and destroyed widgets will not be deleted (not fixed yet, https://github.com/MyGUI/mygui/issues/21)
         if (!mEnvironment.getInputManager()->isWindowVisible())
+        {
+            mEnvironment.getSoundManager()->pausePlayback();
             return false;
+        }
+        else
+            mEnvironment.getSoundManager()->resumePlayback();
 
         // sound
         if (mUseSound)
@@ -111,8 +116,8 @@ bool OMW::Engine::frame(float frametime)
         bool guiActive = mEnvironment.getWindowManager()->isGuiMode();
 
         osg::Timer_t beforeScriptTick = osg::Timer::instance()->tick();
-        if (mEnvironment.getStateManager()->getState()==
-            MWBase::StateManager::State_Running)
+        if (mEnvironment.getStateManager()->getState()!=
+            MWBase::StateManager::State_NoGame)
         {
             if (!paused)
             {
@@ -132,6 +137,7 @@ bool OMW::Engine::frame(float frametime)
             {
                 double hours = (frametime * mEnvironment.getWorld()->getTimeScaleFactor()) / 3600.0;
                 mEnvironment.getWorld()->advanceTime(hours, true);
+                mEnvironment.getWorld()->rechargeItems(frametime, true);
             }
         }
         osg::Timer_t afterScriptTick = osg::Timer::instance()->tick();
@@ -154,14 +160,23 @@ bool OMW::Engine::frame(float frametime)
                 mEnvironment.getStateManager()->endGame();
         }
 
+        // update physics
+        osg::Timer_t beforePhysicsTick = osg::Timer::instance()->tick();
+        if (mEnvironment.getStateManager()->getState()!=
+            MWBase::StateManager::State_NoGame)
+        {
+            mEnvironment.getWorld()->updatePhysics(frametime, guiActive);
+        }
+        osg::Timer_t afterPhysicsTick = osg::Timer::instance()->tick();
+
         // update world
-        osg::Timer_t beforePhysicsTick = osg::Timer::instance()->tick();;
+        osg::Timer_t beforeWorldTick = osg::Timer::instance()->tick();
         if (mEnvironment.getStateManager()->getState()!=
             MWBase::StateManager::State_NoGame)
         {
             mEnvironment.getWorld()->update(frametime, guiActive);
         }
-        osg::Timer_t afterPhysicsTick = osg::Timer::instance()->tick();
+        osg::Timer_t afterWorldTick = osg::Timer::instance()->tick();
 
         // update GUI
         mEnvironment.getWindowManager()->onFrame(frametime);
@@ -180,12 +195,18 @@ bool OMW::Engine::frame(float frametime)
         stats->setAttribute(frameNumber, "physics_time_taken", osg::Timer::instance()->delta_s(beforePhysicsTick, afterPhysicsTick));
         stats->setAttribute(frameNumber, "physics_time_end", osg::Timer::instance()->delta_s(mStartTick, afterPhysicsTick));
 
+        stats->setAttribute(frameNumber, "world_time_begin", osg::Timer::instance()->delta_s(mStartTick, beforeWorldTick));
+        stats->setAttribute(frameNumber, "world_time_taken", osg::Timer::instance()->delta_s(beforeWorldTick, afterWorldTick));
+        stats->setAttribute(frameNumber, "world_time_end", osg::Timer::instance()->delta_s(mStartTick, afterWorldTick));
+
         if (stats->collectStats("resource"))
         {
             mResourceSystem->reportStats(frameNumber, stats);
 
             stats->setAttribute(frameNumber, "WorkQueue", mWorkQueue->getNumItems());
             stats->setAttribute(frameNumber, "WorkThread", mWorkQueue->getNumActiveThreads());
+
+            mEnvironment.getWorld()->getNavigator()->reportStats(frameNumber, *stats);
         }
 
     }
@@ -210,16 +231,18 @@ OMW::Engine::Engine(Files::ConfigurationManager& configurationManager)
   , mActivationDistanceOverride(-1)
   , mGrab(true)
   , mExportFonts(false)
+  , mRandomSeed(0)
   , mScriptContext (0)
   , mFSStrict (false)
   , mScriptBlacklistUse (true)
   , mNewGame (false)
   , mCfgMgr(configurationManager)
 {
-    Misc::Rng::init();
     MWClass::registerClasses();
 
-    Uint32 flags = SDL_INIT_VIDEO|SDL_INIT_NOPARACHUTE|SDL_INIT_GAMECONTROLLER|SDL_INIT_JOYSTICK;
+    SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0"); // We use only gamepads
+
+    Uint32 flags = SDL_INIT_VIDEO|SDL_INIT_NOPARACHUTE|SDL_INIT_GAMECONTROLLER|SDL_INIT_JOYSTICK|SDL_INIT_SENSOR;
     if(SDL_WasInit(flags) == 0)
     {
         SDL_SetMainReady();
@@ -241,9 +264,12 @@ OMW::Engine::~Engine()
 
     mWorkQueue = nullptr;
 
+    mViewer = nullptr;
+
     mResourceSystem.reset();
 
-    mViewer = nullptr;
+    delete mEncoder;
+    mEncoder = nullptr;
 
     if (mWindow)
     {
@@ -264,7 +290,8 @@ void OMW::Engine::enableFSStrict(bool fsStrict)
 void OMW::Engine::setDataDirs (const Files::PathContainer& dataDirs)
 {
     mDataDirs = dataDirs;
-    mFileCollections = Files::Collections (dataDirs, !mFSStrict);
+    mDataDirs.insert(mDataDirs.begin(), (mResDir / "vfs"));
+    mFileCollections = Files::Collections (mDataDirs, !mFSStrict);
 }
 
 // Add BSA archive
@@ -413,11 +440,11 @@ void OMW::Engine::createWindow(Settings::Manager& settings)
 
     osg::ref_ptr<osg::Camera> camera = mViewer->getCamera();
     camera->setGraphicsContext(graphicsWindow);
-    camera->setViewport(0, 0, width, height);
+    camera->setViewport(0, 0, traits->width, traits->height);
 
     mViewer->realize();
 
-    mViewer->getEventQueue()->getCurrentEventState()->setWindowRectangle(0, 0, width, height);
+    mViewer->getEventQueue()->getCurrentEventState()->setWindowRectangle(0, 0, traits->width, traits->height);
 }
 
 void OMW::Engine::setWindowIcon()
@@ -483,24 +510,23 @@ void OMW::Engine::prepareEngine (Settings::Manager & settings)
         if(boost::filesystem::exists(input2)) {
             boost::filesystem::copy_file(input2, keybinderUser);
             keybinderUserExists = boost::filesystem::exists(keybinderUser);
+            Log(Debug::Info) << "Loading keybindings file: " << keybinderUser;
         }
     }
+    else
+        Log(Debug::Info) << "Loading keybindings file: " << keybinderUser;
 
-    // find correct path to the game controller bindings
-    // File format for controller mappings is different for SDL <= 2.0.4, 2.0.5, and >= 2.0.6
-    SDL_version linkedSdlVersion;
-    SDL_GetVersion(&linkedSdlVersion);
-    std::string controllerFileName;
-    if (linkedSdlVersion.major == 2 && linkedSdlVersion.minor == 0 && linkedSdlVersion.patch <= 4) {
-        controllerFileName = "gamecontrollerdb_204.txt";
-    } else if (linkedSdlVersion.major == 2 && linkedSdlVersion.minor == 0 && linkedSdlVersion.patch == 5) {
-        controllerFileName = "gamecontrollerdb_205.txt";
-    } else {
-        controllerFileName = "gamecontrollerdb.txt";
+    const std::string userdefault = mCfgMgr.getUserConfigPath().string() + "/gamecontrollerdb.txt";
+    const std::string localdefault = mCfgMgr.getLocalPath().string() + "/gamecontrollerdb.txt";
+    const std::string globaldefault = mCfgMgr.getGlobalPath().string() + "/gamecontrollerdb.txt";
+
+    std::string userGameControllerdb;
+    if (boost::filesystem::exists(userdefault)){
+        userGameControllerdb = userdefault;
     }
+    else
+        userGameControllerdb = "";
 
-    const std::string localdefault = mCfgMgr.getLocalPath().string() + "/" + controllerFileName;
-    const std::string globaldefault = mCfgMgr.getGlobalPath().string() + "/" + controllerFileName;
     std::string gameControllerdb;
     if (boost::filesystem::exists(localdefault))
         gameControllerdb = localdefault;
@@ -509,34 +535,34 @@ void OMW::Engine::prepareEngine (Settings::Manager & settings)
     else
         gameControllerdb = ""; //if it doesn't exist, pass in an empty string
 
-    MWInput::InputManager* input = new MWInput::InputManager (mWindow, mViewer, mScreenCaptureHandler, mScreenCaptureOperation, keybinderUser, keybinderUserExists, gameControllerdb, mGrab);
+    MWInput::InputManager* input = new MWInput::InputManager (mWindow, mViewer, mScreenCaptureHandler, mScreenCaptureOperation, keybinderUser, keybinderUserExists, userGameControllerdb, gameControllerdb, mGrab);
     mEnvironment.setInputManager (input);
 
     std::string myguiResources = (mResDir / "mygui").string();
     osg::ref_ptr<osg::Group> guiRoot = new osg::Group;
     guiRoot->setName("GUI Root");
-    guiRoot->setNodeMask(MWRender::Mask_GUI);
+    guiRoot->setNodeMask(SceneUtil::Mask_GUI);
     rootNode->addChild(guiRoot);
     MWGui::WindowManager* window = new MWGui::WindowManager(mViewer, guiRoot, mResourceSystem.get(), mWorkQueue.get(),
                 mCfgMgr.getLogPath().string() + std::string("/"), myguiResources,
-                mScriptConsoleMode, mTranslationDataStorage, mEncoding, mExportFonts, mFallbackMap,
+                mScriptConsoleMode, mTranslationDataStorage, mEncoding, mExportFonts,
                 Version::getOpenmwVersionDescription(mResDir.string()), mCfgMgr.getUserConfigPath().string());
     mEnvironment.setWindowManager (window);
 
     // Create sound system
-    mEnvironment.setSoundManager (new MWSound::SoundManager(mVFS.get(), mFallbackMap, mUseSound));
+    mEnvironment.setSoundManager (new MWSound::SoundManager(mVFS.get(), mUseSound));
 
     if (!mSkipMenu)
     {
-        std::string logo = mFallbackMap["Movies_Company_Logo"];
+        const std::string& logo = Fallback::Map::getString("Movies_Company_Logo");
         if (!logo.empty())
             window->playVideo(logo, true);
     }
 
     // Create the world
     mEnvironment.setWorld( new MWWorld::World (mViewer, rootNode, mResourceSystem.get(), mWorkQueue.get(),
-        mFileCollections, mContentFiles, mEncoder, mFallbackMap,
-        mActivationDistanceOverride, mCellName, mStartupScript, mResDir.string(), mCfgMgr.getUserDataPath().string()));
+        mFileCollections, mContentFiles, mEncoder, mActivationDistanceOverride, mCellName,
+        mStartupScript, mResDir.string(), mCfgMgr.getUserDataPath().string()));
     mEnvironment.getWorld()->setupPlayer();
     input->setPlayer(&mEnvironment.getWorld()->getPlayer());
 
@@ -641,6 +667,11 @@ void OMW::Engine::go()
     assert (!mContentFiles.empty());
 
     Log(Debug::Info) << "OSG version: " << osgGetVersion();
+    SDL_version sdlVersion;
+    SDL_GetVersion(&sdlVersion);
+    Log(Debug::Info) << "SDL version: " << (int)sdlVersion.major << "." << (int)sdlVersion.minor << "." << (int)sdlVersion.patch;
+
+    Misc::Rng::init(mRandomSeed);
 
     // Load settings
     Settings::Manager settings;
@@ -648,12 +679,16 @@ void OMW::Engine::go()
     settingspath = loadSettings (settings);
 
     // Create encoder
-    ToUTF8::Utf8Encoder encoder (mEncoding);
-    mEncoder = &encoder;
+    mEncoder = new ToUTF8::Utf8Encoder(mEncoding);
 
     // Setup viewer
     mViewer = new osgViewer::Viewer;
     mViewer->setReleaseContextAtEndOfFrameHint(false);
+
+#if OSG_VERSION_GREATER_OR_EQUAL(3,5,5)
+    // Do not try to outsmart the OS thread scheduler (see bug #4785).
+    mViewer->setUseConfigureAffinity(false);
+#endif
 
     mScreenCaptureOperation = new WriteScreenshotToFileOperation(mCfgMgr.getUserDataPath().string(),
         Settings::Manager::getString("screenshot format", "General"));
@@ -671,10 +706,12 @@ void OMW::Engine::go()
 
     statshandler->addUserStatsLine("Script", osg::Vec4f(1.f, 1.f, 1.f, 1.f), osg::Vec4f(1.f, 1.f, 1.f, 1.f),
                                    "script_time_taken", 1000.0, true, false, "script_time_begin", "script_time_end", 10000);
-    statshandler->addUserStatsLine("Mechanics", osg::Vec4f(1.f, 1.f, 1.f, 1.f), osg::Vec4f(1.f, 1.f, 1.f, 1.f),
+    statshandler->addUserStatsLine("Mech", osg::Vec4f(1.f, 1.f, 1.f, 1.f), osg::Vec4f(1.f, 1.f, 1.f, 1.f),
                                    "mechanics_time_taken", 1000.0, true, false, "mechanics_time_begin", "mechanics_time_end", 10000);
-    statshandler->addUserStatsLine("Physics", osg::Vec4f(1.f, 1.f, 1.f, 1.f), osg::Vec4f(1.f, 1.f, 1.f, 1.f),
+    statshandler->addUserStatsLine("Phys", osg::Vec4f(1.f, 1.f, 1.f, 1.f), osg::Vec4f(1.f, 1.f, 1.f, 1.f),
                                    "physics_time_taken", 1000.0, true, false, "physics_time_begin", "physics_time_end", 10000);
+    statshandler->addUserStatsLine("World", osg::Vec4f(1.f, 1.f, 1.f, 1.f), osg::Vec4f(1.f, 1.f, 1.f, 1.f),
+                                   "world_time_taken", 1000.0, true, false, "world_time_begin", "world_time_end", 10000);
 
     mViewer->addEventHandler(statshandler);
 
@@ -690,20 +727,19 @@ void OMW::Engine::go()
     {
         // start in main menu
         mEnvironment.getWindowManager()->pushGuiMode (MWGui::GM_MainMenu);
-        try
-        {
-            // Is there an ini setting for this filename or something?
-            mEnvironment.getSoundManager()->streamMusic("Special/morrowind title.mp3");
-
-            std::string logo = mFallbackMap["Movies_Morrowind_Logo"];
-            if (!logo.empty())
-                mEnvironment.getWindowManager()->playVideo(logo, true);
-        }
-        catch (...) {}
+        mEnvironment.getSoundManager()->playTitleMusic();
+        const std::string& logo = Fallback::Map::getString("Movies_Morrowind_Logo");
+        if (!logo.empty())
+            mEnvironment.getWindowManager()->playVideo(logo, true);
     }
     else
     {
         mEnvironment.getStateManager()->newGame (!mNewGame);
+    }
+
+    if (!mStartupScript.empty() && mEnvironment.getStateManager()->getState() == MWState::StateManager::State_Running)
+    {
+        mEnvironment.getWindowManager()->executeInConsole(mStartupScript);
     }
 
     // Start the main rendering loop
@@ -765,11 +801,6 @@ void OMW::Engine::setEncoding(const ToUTF8::FromType& encoding)
     mEncoding = encoding;
 }
 
-void OMW::Engine::setFallbackValues(std::map<std::string,std::string> fallbackMap)
-{
-    mFallbackMap = fallbackMap;
-}
-
 void OMW::Engine::setScriptConsoleMode (bool enabled)
 {
     mScriptConsoleMode = enabled;
@@ -808,4 +839,9 @@ void OMW::Engine::enableFontExport(bool exportFonts)
 void OMW::Engine::setSaveGameFile(const std::string &savegame)
 {
     mSaveGameFile = savegame;
+}
+
+void OMW::Engine::setRandomSeed(unsigned int seed)
+{
+    mRandomSeed = seed;
 }

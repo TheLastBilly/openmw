@@ -118,6 +118,16 @@ namespace MWWorld
             /// Repopulate mMergedRefs.
             void updateMergedRefs();
 
+            // (item, max charge)
+            typedef std::vector<std::pair<LiveCellRefBase*, float> > TRechargingItems;
+            TRechargingItems mRechargingItems;
+
+            bool mRechargingItemsUpToDate;
+
+            void updateRechargingItems();
+            void rechargeItems(float duration);
+            void checkItem(Ptr ptr);
+
             // helper function for forEachInternal
             template<class Visitor, class List>
             bool forEachImp (Visitor& visitor, List& list)
@@ -183,7 +193,8 @@ namespace MWWorld
             /// @return updated MWWorld::Ptr with the new CellStore pointer set.
             MWWorld::Ptr moveTo(const MWWorld::Ptr& object, MWWorld::CellStore* cellToMoveTo);
 
-            void rest();
+            void rest(double hours);
+            void recharge(float duration);
 
             /// Make a copy of the given object and insert it into this cell.
             /// @note If you get a linker error here, this means the given type can not be inserted into a cell.
@@ -233,6 +244,8 @@ namespace MWWorld
 
             float getWaterLevel() const;
 
+            bool movedHere(const MWWorld::Ptr& ptr) const;
+
             void setWaterLevel (float level);
 
             void setFog (ESM::FogState* fog);
@@ -240,7 +253,7 @@ namespace MWWorld
 
             ESM::FogState* getFog () const;
 
-            int count() const;
+            std::size_t count() const;
             ///< Return total number of references, including deleted ones.
 
             void load ();
@@ -256,7 +269,7 @@ namespace MWWorld
             /// \attention This function also lists deleted (count 0) objects!
             /// \return Iteration completed?
             template<class Visitor>
-            bool forEach (Visitor& visitor)
+            bool forEach (Visitor&& visitor)
             {
                 if (mState != State_Loaded)
                     return false;
@@ -283,7 +296,7 @@ namespace MWWorld
             /// \attention This function also lists deleted (count 0) objects!
             /// \return Iteration completed?
             template<class Visitor>
-            bool forEachConst (Visitor& visitor) const
+            bool forEachConst (Visitor&& visitor) const
             {
                 if (mState != State_Loaded)
                     return false;
@@ -369,6 +382,7 @@ namespace MWWorld
             public:
                 ///@note must return nullptr if the cell is not found
                 virtual CellStore* getCellStore(const ESM::CellId& cellId) = 0;
+                virtual ~GetCellStoreCallback() = default;
             };
 
             /// @param callback to use for retrieving of additional CellStore objects by ID (required for resolving moved references)

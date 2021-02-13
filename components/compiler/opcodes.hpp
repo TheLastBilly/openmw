@@ -75,6 +75,8 @@ namespace Compiler
     namespace Cell
     {
         const int opcodeCellChanged = 0x2000000;
+        const int opcodeTestCells = 0x200030e;
+        const int opcodeTestInteriorCells = 0x200030f;
         const int opcodeCOC = 0x2000026;
         const int opcodeCOE = 0x2000226;
         const int opcodeGetInterior = 0x2000131;
@@ -150,6 +152,7 @@ namespace Compiler
     namespace Dialogue
     {
         const int opcodeJournal = 0x2000133;
+        const int opcodeJournalExplicit = 0x200030b;
         const int opcodeSetJournalIndex = 0x2000134;
         const int opcodeGetJournalIndex = 0x2000135;
         const int opcodeAddTopic = 0x200013a;
@@ -296,6 +299,12 @@ namespace Compiler
         const int opcodeShowSceneGraph = 0x2002f;
         const int opcodeShowSceneGraphExplicit = 0x20030;
         const int opcodeToggleBorders = 0x2000307;
+        const int opcodeToggleNavMesh = 0x2000308;
+        const int opcodeToggleActorsPaths = 0x2000309;
+        const int opcodeSetNavMeshNumberToRender = 0x200030a;
+        const int opcodeRepairedOnMe = 0x200030c;
+        const int opcodeRepairedOnMeExplicit = 0x200030d;
+        const int opcodeToggleRecastMesh = 0x2000310;
     }
 
     namespace Sky

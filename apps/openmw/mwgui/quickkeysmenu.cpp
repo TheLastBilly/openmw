@@ -4,6 +4,7 @@
 #include <MyGUI_Button.h>
 #include <MyGUI_Gui.h>
 #include <MyGUI_ImageBox.h>
+#include <MyGUI_RenderManager.h>
 
 #include <components/esm/esmwriter.hpp>
 #include <components/esm/quickkeys.hpp>
@@ -257,7 +258,12 @@ namespace MWGui
         mSelected->id = item.getCellRef().getRefId();
         mSelected->name = item.getClass().getName(item);
 
-        mSelected->button->setFrame("textures\\menu_icon_select_magic_magic.dds", MyGUI::IntCoord(2, 2, 40, 40));
+        float scale = 1.f;
+        MyGUI::ITexture* texture = MyGUI::RenderManager::getInstance().getTexture("textures\\menu_icon_select_magic_magic.dds");
+        if (texture)
+            scale = texture->getHeight() / 64.f;
+
+        mSelected->button->setFrame("textures\\menu_icon_select_magic_magic.dds", MyGUI::IntCoord(0, 0, 44*scale, 44*scale));
         mSelected->button->setIcon(item);
 
         mSelected->button->setUserString("ToolTipType", "ItemPtr");
@@ -292,7 +298,12 @@ namespace MWGui
         path.insert(slashPos+1, "b_");
         path = MWBase::Environment::get().getWindowManager()->correctIconPath(path);
 
-        mSelected->button->setFrame("textures\\menu_icon_select_magic.dds", MyGUI::IntCoord(2, 2, 40, 40));
+        float scale = 1.f;
+        MyGUI::ITexture* texture = MyGUI::RenderManager::getInstance().getTexture("textures\\menu_icon_select_magic.dds");
+        if (texture)
+            scale = texture->getHeight() / 64.f;
+
+        mSelected->button->setFrame("textures\\menu_icon_select_magic.dds", MyGUI::IntCoord(0, 0, 44*scale, 44*scale));
         mSelected->button->setIcon(path);
 
         if (mMagicSelectionDialog)
@@ -493,7 +504,8 @@ namespace MWGui
 
         ESM::QuickKeys keys;
 
-        for (int i=0; i<10; ++i)
+        // NB: The quick key with index 9 always has Hand-to-Hand type and must not be saved
+        for (int i=0; i<9; ++i)
         {
             ItemWidget* button = mKey[i].button;
 
@@ -540,32 +552,33 @@ namespace MWGui
         MWWorld::InventoryStore& store = player.getClass().getInventoryStore(player);
 
         int i=0;
-        for (std::vector<ESM::QuickKeys::QuickKey>::const_iterator it = keys.mKeys.begin(); it != keys.mKeys.end(); ++it)
+        for (ESM::QuickKeys::QuickKey& quickKey : keys.mKeys)
         {
-            if (i >= 10)
+            // NB: The quick key with index 9 always has Hand-to-Hand type and must not be loaded
+            if (i >= 9)
                 return;
 
             mSelected = &mKey[i];
 
-            switch (it->mType)
+            switch (quickKey.mType)
             {
             case Type_Magic:
-                if (MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().search(it->mId))
-                    onAssignMagic(it->mId);
+                if (MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().search(quickKey.mId))
+                    onAssignMagic(quickKey.mId);
                 break;
             case Type_Item:
             case Type_MagicItem:
             {
                 // Find the item by id
-                MWWorld::Ptr item = store.findReplacement(it->mId);
+                MWWorld::Ptr item = store.findReplacement(quickKey.mId);
 
                 if (item.isEmpty())
                     unassign(mSelected);
                 else
                 {
-                    if (it->mType == Type_Item)
+                    if (quickKey.mType == Type_Item)
                         onAssignItem(item);
-                    else // if (it->mType == Type_MagicItem)
+                    else // if (quickKey.mType == Type_MagicItem)
                         onAssignMagicItem(item);
                 }
 

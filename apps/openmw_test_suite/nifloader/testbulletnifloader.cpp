@@ -115,17 +115,6 @@ static std::ostream& operator <<(std::ostream& stream, const btCollisionShape* v
     return value ? stream << "&" << *value : stream << "nullptr";
 }
 
-namespace osg
-{
-    static std::ostream& operator <<(std::ostream& stream, const Vec3f& value)
-    {
-        return stream << "osg::Vec3f {"
-            << value.x() << ", "
-            << value.y() << ", "
-            << value.z() << "}";
-    }
-}
-
 namespace std
 {
     static std::ostream& operator <<(std::ostream& stream, const map<int, int>& value)
@@ -142,6 +131,7 @@ namespace Resource
     static bool operator ==(const Resource::BulletShape& lhs, const Resource::BulletShape& rhs)
     {
         return compareObjects(lhs.mCollisionShape, rhs.mCollisionShape)
+            && compareObjects(lhs.mAvoidCollisionShape, rhs.mAvoidCollisionShape)
             && lhs.mCollisionBoxHalfExtents == rhs.mCollisionBoxHalfExtents
             && lhs.mCollisionBoxTranslate == rhs.mCollisionBoxTranslate
             && lhs.mAnimatedShapes == rhs.mAnimatedShapes;
@@ -151,7 +141,8 @@ namespace Resource
     {
         return stream << "Resource::BulletShape {"
             << value.mCollisionShape << ", "
-            << value.mCollisionBoxHalfExtents << ", "
+            << value.mAvoidCollisionShape << ", "
+            << "osg::Vec3f {" << value.mCollisionBoxHalfExtents << "}" << ", "
             << value.mAnimatedShapes
             << "}";
     }
@@ -217,18 +208,13 @@ namespace
 
     void init(Nif::Extra& value)
     {
-        value.extra = Nif::ExtraPtr(nullptr);
-    }
-
-    void init(Nif::Controlled& value)
-    {
-        init(static_cast<Nif::Extra&>(value));
-        value.controller = Nif::ControllerPtr(nullptr);
+        value.next = Nif::ExtraPtr(nullptr);
     }
 
     void init(Nif::Named& value)
     {
-        init(static_cast<Nif::Controlled&>(value));
+        value.extra = Nif::ExtraPtr(nullptr);
+        value.controller = Nif::ControllerPtr(nullptr);
     }
 
     void init(Nif::Node& value)
@@ -263,10 +249,11 @@ namespace
         value.phase = 0;
         value.timeStart = 0;
         value.timeStop = 0;
-        value.target = Nif::ControlledPtr(nullptr);
+        value.target = Nif::NamedPtr(nullptr);
     }
 
-    void copy(const btTransform& src, Nif::Transformation& dst) {
+    void copy(const btTransform& src, Nif::Transformation& dst)
+    {
         dst.pos = osg::Vec3f(src.getOrigin().x(), src.getOrigin().y(), src.getOrigin().z());
         for (int row = 0; row < 3; ++row)
             for (int column = 0; column < 3; ++column)
@@ -275,15 +262,17 @@ namespace
 
     struct NifFileMock : Nif::File
     {
-        MOCK_CONST_METHOD1(fail, void (const std::string&));
-        MOCK_CONST_METHOD1(warn, void (const std::string&));
         MOCK_CONST_METHOD1(getRecord, Nif::Record* (std::size_t));
         MOCK_CONST_METHOD0(numRecords, std::size_t ());
         MOCK_CONST_METHOD1(getRoot, Nif::Record* (std::size_t));
         MOCK_CONST_METHOD0(numRoots, std::size_t ());
+        MOCK_CONST_METHOD1(getString, std::string (uint32_t));
         MOCK_METHOD1(setUseSkinning, void (bool));
         MOCK_CONST_METHOD0(getUseSkinning, bool ());
         MOCK_CONST_METHOD0(getFilename, std::string ());
+        MOCK_CONST_METHOD0(getVersion, unsigned int ());
+        MOCK_CONST_METHOD0(getUserVersion, unsigned int ());
+        MOCK_CONST_METHOD0(getBethVersion, unsigned int ());
     };
 
     struct RecordMock : Nif::Record
@@ -837,7 +826,10 @@ namespace
         EXPECT_CALL(mNifFile, getFilename()).WillOnce(Return("test.nif"));
         const auto result = mLoader.load(mNifFile);
 
+        std::unique_ptr<btTriangleMesh> triangles(new btTriangleMesh(false));
+        triangles->addTriangle(btVector3(0, 0, 0), btVector3(1, 0, 0), btVector3(1, 1, 0));
         Resource::BulletShape expected;
+        expected.mAvoidCollisionShape = new Resource::TriangleMeshShape(triangles.release(), false);
 
         EXPECT_EQ(*result, expected);
     }
@@ -891,7 +883,7 @@ namespace
 
     TEST_F(TestBulletNifLoader, for_tri_shape_child_node_with_not_first_extra_data_string_starting_with_nc_should_return_shape_with_null_collision_shape)
     {
-        mNiStringExtraData.extra = Nif::ExtraPtr(&mNiStringExtraData2);
+        mNiStringExtraData.next = Nif::ExtraPtr(&mNiStringExtraData2);
         mNiStringExtraData2.string = "NC___";
         mNiStringExtraData2.recType = Nif::RC_NiStringExtraData;
         mNiTriShape.extra = Nif::ExtraPtr(&mNiStringExtraData);

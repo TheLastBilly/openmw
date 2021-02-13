@@ -2,6 +2,7 @@
 
 #include <MyGUI_FactoryManager.h>
 #include <MyGUI_ImageBox.h>
+#include <MyGUI_RenderManager.h>
 #include <MyGUI_TextBox.h>
 
 // correctIconPath
@@ -30,6 +31,7 @@ namespace
 
 namespace MWGui
 {
+    std::map<std::string, float> ItemWidget::mScales;
 
     ItemWidget::ItemWidget()
         : mItem(nullptr)
@@ -43,6 +45,7 @@ namespace MWGui
     void ItemWidget::registerComponents()
     {
         MyGUI::FactoryManager::getInstance().registerFactory<ItemWidget>("Widget");
+        MyGUI::FactoryManager::getInstance().registerFactory<SpellWidget>("Widget");
     }
 
     void ItemWidget::initialiseOverride()
@@ -145,12 +148,48 @@ namespace MWGui
         if (backgroundTex != "")
             backgroundTex += ".dds";
 
+        float scale = 1.f;
+        if (!backgroundTex.empty())
+        {
+            auto found = mScales.find(backgroundTex);
+            if (found == mScales.end())
+            {
+                // By default, background icons are supposed to use the 42x42 part of 64x64 image.
+                // If the image has a different size, we should use a different chunk size
+                // Cache result to do not retrieve background texture every frame.
+                MyGUI::ITexture* texture = MyGUI::RenderManager::getInstance().getTexture(backgroundTex);
+                if (texture)
+                    scale = texture->getHeight() / 64.f;
+
+                mScales[backgroundTex] = scale;
+            }
+            else
+                scale = found->second;
+        }
+
         if (state == Barter && !isMagic)
-            setFrame(backgroundTex, MyGUI::IntCoord(2,2,42,42));
+            setFrame(backgroundTex, MyGUI::IntCoord(2*scale,2*scale,44*scale,44*scale));
         else
-            setFrame(backgroundTex, MyGUI::IntCoord(0,0,42,42));
+            setFrame(backgroundTex, MyGUI::IntCoord(0,0,44*scale,44*scale));
 
         setIcon(ptr);
+    }
+
+    void SpellWidget::setSpellIcon(const std::string& icon)
+    {
+        if (mFrame && !mCurrentFrame.empty())
+        {
+            mCurrentFrame.clear();
+            mFrame->setImageTexture("");
+        }
+        if (mCurrentIcon != icon)
+        {
+            mCurrentIcon = icon;
+            if (mItemShadow)
+                mItemShadow->setImageTexture(icon);
+            if (mItem)
+                mItem->setImageTexture(icon);
+        }
     }
 
 }

@@ -76,9 +76,9 @@ void CSVWorld::NotEditableSubDelegate::setEditorData (QWidget* editor, const QMo
     else if (CSMWorld::Columns::hasEnums (columnId))
     {
         int data = v.toInt();
-        std::vector<std::string> enumNames (CSMWorld::Columns::getEnums (columnId));
+        std::vector<std::pair<int,std::string>> enumNames (CSMWorld::Columns::getEnums (columnId));
 
-        label->setText(QString::fromUtf8(enumNames.at(data).c_str()));
+        label->setText(QString::fromUtf8(enumNames.at(data).second.c_str()));
     }
     else
     {
@@ -555,8 +555,8 @@ void CSVWorld::EditWidget::remake(int row)
             if (mTable->hasChildren(mTable->index(row, i)) &&
                     !(flags & CSMWorld::ColumnBase::Flag_Dialogue_List))
             {
-                mNestedModels.push_back(new CSMWorld::NestedTableProxyModel (
-                            mTable->index(row, i), display, dynamic_cast<CSMWorld::IdTree*>(mTable)));
+                CSMWorld::IdTree* innerTable = &dynamic_cast<CSMWorld::IdTree&>(*mTable);
+                mNestedModels.push_back(new CSMWorld::NestedTableProxyModel (mTable->index(row, i), display, innerTable));
 
                 int idColumn = mTable->findColumnIndex (CSMWorld::Columns::ColumnId_Id);
                 int typeColumn = mTable->findColumnIndex (CSMWorld::Columns::ColumnId_RecordType);

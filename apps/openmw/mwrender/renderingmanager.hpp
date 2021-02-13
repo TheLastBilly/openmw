@@ -7,10 +7,15 @@
 
 #include <components/settings/settings.hpp>
 
+#include <osgUtil/IncrementalCompileOperation>
+
 #include "objects.hpp"
 
 #include "renderinginterface.hpp"
 #include "rendermode.hpp"
+
+#include <deque>
+#include <memory>
 
 namespace osg
 {
@@ -51,8 +56,15 @@ namespace Fallback
 
 namespace SceneUtil
 {
+    class ShadowManager;
     class WorkQueue;
     class UnrefQueue;
+}
+
+namespace DetourNavigator
+{
+    struct Navigator;
+    struct Settings;
 }
 
 namespace MWRender
@@ -68,13 +80,19 @@ namespace MWRender
     class Water;
     class TerrainStorage;
     class LandManager;
+    class NavMesh;
+    class ActorsPaths;
+    class RecastMesh;
 
     class RenderingManager : public MWRender::RenderingInterface
     {
     public:
-        RenderingManager(osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode, Resource::ResourceSystem* resourceSystem, SceneUtil::WorkQueue* workQueue,
-                         const Fallback::Map* fallback, const std::string& resourcePath);
+        RenderingManager(osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
+                         Resource::ResourceSystem* resourceSystem, SceneUtil::WorkQueue* workQueue,
+                         const std::string& resourcePath, DetourNavigator::Navigator& navigator);
         ~RenderingManager();
+
+        osgUtil::IncrementalCompileOperation* getIncrementalCompileOperation();
 
         MWRender::Objects& getObjects();
 
@@ -191,11 +209,10 @@ namespace MWRender
         float getCameraDistance() const;
         Camera* getCamera();
         const osg::Vec3f& getCameraPosition() const;
-        void togglePOV();
+        void togglePOV(bool force = false);
         void togglePreviewMode(bool enable);
         bool toggleVanityMode(bool enable);
         void allowVanityMode(bool allow);
-        void togglePlayerLooking(bool enable);
         void changeVanityModeScale(float factor);
 
         /// temporarily override the field of view with given value.
@@ -211,6 +228,13 @@ namespace MWRender
 
         bool toggleBorders();
 
+        void updateActorPath(const MWWorld::ConstPtr& actor, const std::deque<osg::Vec3f>& path,
+                const osg::Vec3f& halfExtents, const osg::Vec3f& start, const osg::Vec3f& end) const;
+
+        void removeActorPath(const MWWorld::ConstPtr& actor) const;
+
+        void setNavMeshNumber(const std::size_t value);
+
     private:
         void updateProjectionMatrix();
         void updateTextureFiltering();
@@ -220,6 +244,10 @@ namespace MWRender
         void reportStats() const;
 
         void renderCameraToImage(osg::Camera *camera, osg::Image *image, int w, int h);
+
+        void updateNavMesh();
+
+        void updateRecastMesh();
 
         osg::ref_ptr<osgUtil::IntersectionVisitor> getIntersectionVisitor(osgUtil::Intersector* intersector, bool ignorePlayer, bool ignoreActors);
 
@@ -235,6 +263,11 @@ namespace MWRender
 
         osg::ref_ptr<osg::Light> mSunLight;
 
+        DetourNavigator::Navigator& mNavigator;
+        std::unique_ptr<NavMesh> mNavMesh;
+        std::size_t mNavMeshNumber = 0;
+        std::unique_ptr<ActorsPaths> mActorsPaths;
+        std::unique_ptr<RecastMesh> mRecastMesh;
         std::unique_ptr<Pathgrid> mPathgrid;
         std::unique_ptr<Objects> mObjects;
         std::unique_ptr<Water> mWater;
@@ -242,6 +275,7 @@ namespace MWRender
         TerrainStorage* mTerrainStorage;
         std::unique_ptr<SkyManager> mSky;
         std::unique_ptr<EffectManager> mEffectManager;
+        std::unique_ptr<SceneUtil::ShadowManager> mShadowManager;
         osg::ref_ptr<NpcAnimation> mPlayerAnimation;
         osg::ref_ptr<SceneUtil::PositionAttitudeTransform> mPlayerNode;
         std::unique_ptr<Camera> mCamera;

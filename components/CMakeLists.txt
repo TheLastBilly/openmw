@@ -29,11 +29,11 @@ endif (GIT_CHECKOUT)
 # source files
 
 add_component_dir (settings
-    settings
+    settings parser
     )
 
 add_component_dir (bsa
-    bsa_file
+    bsa_file compressedbsafile memorystream
     )
 
 add_component_dir (vfs
@@ -51,7 +51,7 @@ add_component_dir (shader
 add_component_dir (sceneutil
     clone attach visitor util statesetupdater controller skeleton riggeometry morphgeometry lightcontroller
     lightmanager lightutil positionattitudetransform workqueue unrefqueue pathgridutil waterutil writescene serialize optimizer
-    actorutil
+    actorutil detourdebugdraw navmesh agentpath shadow mwshadowtechnique vismask recastmesh
     )
 
 add_component_dir (nif
@@ -86,7 +86,7 @@ add_component_dir (esmterrain
     )
 
 add_component_dir (misc
-    constants utf8stream stringops resourcehelpers rng messageformatparser weakcache
+    gcd constants utf8stream stringops resourcehelpers rng messageformatparser weakcache
     )
 
 add_component_dir (debug
@@ -156,6 +156,26 @@ if(NOT WIN32 AND NOT ANDROID)
     )
 endif()
 
+add_component_dir(detournavigator
+    debug
+    makenavmesh
+    findsmoothpath
+    recastmeshbuilder
+    recastmeshmanager
+    cachedrecastmeshmanager
+    navmeshmanager
+    navigatorimpl
+    asyncnavmeshupdater
+    chunkytrimesh
+    recastmesh
+    tilecachedrecastmeshmanager
+    recastmeshobject
+    navmeshtilescache
+    settings
+    navigator
+    findrandompointaroundcircle
+    )
+
 set (ESM_UI ${CMAKE_SOURCE_DIR}/files/ui/contentselector.ui
     )
 
@@ -199,8 +219,8 @@ add_library(components STATIC ${COMPONENT_FILES} ${MOC_SRCS} ${ESM_UI_HDR})
 target_link_libraries(components
     ${Boost_SYSTEM_LIBRARY}
     ${Boost_FILESYSTEM_LIBRARY}
-    ${Boost_THREAD_LIBRARY}
     ${Boost_PROGRAM_OPTIONS_LIBRARY}
+    ${Boost_IOSTREAMS_LIBRARY}
     ${OSG_LIBRARIES}
     ${OPENTHREADS_LIBRARIES}
     ${OSGPARTICLE_LIBRARIES}
@@ -209,16 +229,22 @@ target_link_libraries(components
     ${OSGVIEWER_LIBRARIES}
     ${OSGTEXT_LIBRARIES}
     ${OSGGA_LIBRARIES}
+    ${OSGSHADOW_LIBRARIES}
     ${OSGANIMATION_LIBRARIES}
     ${Bullet_LIBRARIES}
     ${SDL2_LIBRARIES}
     ${OPENGL_gl_LIBRARY}
     ${MyGUI_LIBRARIES}
+    ${BSAOPTHASH_LIBRARIES}
+    RecastNavigation::DebugUtils
+    RecastNavigation::Detour
+    RecastNavigation::Recast
     )
 
 if (WIN32)
     target_link_libraries(components
-    ${Boost_LOCALE_LIBRARY})
+    ${Boost_LOCALE_LIBRARY}
+    ${Boost_ZLIB_LIBRARY})
 endif()
 
 if (USE_QT)
